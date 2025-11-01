@@ -22,6 +22,12 @@
 ////Project Phase 5
 
 1. What should be the values of the register fields which are not being assigned in the next clock?
-2. For nop implementation - Do we have to retain the reg value as it is or do we have to propogate something? (To retain the reg value we can just freeze the reg)
+2. For nop implementation - Do we have to retain the reg value as it is or do we have to propogate something? (To retain the reg value we can just freeze the reg) - it is equal to addi x0 , x0 ,0
 3. New OPCODE check for nop has to be implemented in MCU.
 4. How about I still keep an enable for a single cycle processor? A register Bypass signal?
+5. Can we reduce the instruction wires to the MCU?
+6. Add Arrows in the schematic?
+7. Do we have to flush the MEM_WB pipeline for branch instructions?
+8. We do not need to flop rs1, rs2, rd, imm always. - We only need three out of the four are required at anytime.
+9. When do you want to retire an instruction? - o_retire_inst? (Similarly all other retire signals?)
+10 . Do I have to pipeline the halt signal? - I think Yes - Because or else the instructions in the pipeline ahead will not get executed

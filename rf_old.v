@@ -17,7 +17,7 @@ module rf #(
     // cause a single-cycle processor to behave incorrectly. You are required
     // to implement and test both modes. In phase 4, you will disable this
     // parameter, before enabling it in phase 6.
-    parameter BYPASS_EN = 0
+    parameter BYPASS_EN = 1
 ) (
     // Global clock.
     input  wire        i_clk,
