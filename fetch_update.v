@@ -17,8 +17,8 @@ module fetch (
     //input  wire [31:0] i_pc_o_rs1_data_mux_pcaddr,  // Take o_rs1 for JALR instruction and PC for others
     input  wire [31:0] i_pc_o_rs1_data_mux_imm_add_data,  // Take o_rs1 for JALR instruction and PC for others
     //input  wire [31:0]i_imm_o_immediate,
-    output wire [31:0]o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
-    output wire [31:0]o_pc_plus_4,
+    output wire [31:0] o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
+    output wire [31:0] o_pc_plus_4,
     output reg  [31:0] PC                           // Program Counter register
 );
     wire [31:0]pc_imm_mux_val;
@@ -418,7 +418,34 @@ module hart #(
     // the next program counter after the instruction is retired. For most
     // instructions, this is `o_retire_pc + 4`, but must be the branch or jump
     // target for *taken* branches and jumps.
-    output wire [31:0] o_retire_next_pc
+    output wire [31:0] o_retire_next_pc,
+
+    ////////////Added the below new signals for Project Phase 5////////////
+    // The following data memory retire interface is used to record the
+    // memory transactions completed by the instruction being retired.
+    // As such, it mirrors the transactions happening on the main data
+    // memory interface (o_dmem_* and i_dmem_*) but is delayed to match
+    // the retirement of the instruction. You can hook this up by just
+    // registering the main dmem interface signals into the writeback
+    // stage of your pipeline.
+    // All these fields are don't-care for instructions that do not
+    // access data memory (o_retire_dmem_ren and o_retire_dmem_wen
+    // not asserted).
+    // NOTE: This interface is new for phase 5 in order to account for
+    // the delay between data memory accesses and instruction retire.
+    //
+    // The 32-bit data memory address accessed by the instruction.
+    output wire [31:0] o_retire_dmem_addr,
+    // The byte masked used for the data memory access.
+    output wire [ 3:0] o_retire_dmem_mask,
+    // Asserted if the instruction performed a read (load) from data memory.
+    output wire        o_retire_dmem_ren,
+    // Asserted if the instruction performed a write (store) to data memory.
+    output wire        o_retire_dmem_wen,
+    // The 32-bit data read from memory by a load instruction.
+    output wire [31:0] o_retire_dmem_rdata,
+    // The 32-bit data written to memory by a store instruction.
+    output wire [31:0] o_retire_dmem_wdata
 
 `ifdef RISCV_FORMAL
     ,`RVFI_OUTPUTS,
@@ -464,27 +491,28 @@ wire [31:0] t_pc_o_rs1_data_mux_imm_add_EX_stage_data; //TODO - Should go to EX/
 wire [31:0] f_rs2_rdata;
 wire [31:0] t_o_alu_result; // Getting the Alu result before pipelining
 
-///TODO - To change all the reture signals to the latest values pipelined
-assign o_retire_halt      = t_clu_halt;
-assign o_retire_valid     = 1;
-assign o_retire_inst      =   i_imem_rdata;         
-assign o_retire_trap      =   0; //Temporary assignment - Need to be modified         
-assign o_retire_rs1_raddr =   i_imem_rdata[19:15];   // TODO - When to retire - Do we need to get it from the pipeline      
-assign o_retire_rs1_rdata =   o_rs1_rdata;           // TODO - When to retire - Do we need to get it from the pipeline 
-assign o_retire_rs2_raddr =   i_imem_rdata[24:20];   // TODO - When to retire - Do we need to get it from the pipeline 
-assign o_retire_rs2_rdata =   t_rs2_rdata;           // TODO - When to retire - Do we need to get it from the pipeline 
-assign o_retire_rd_waddr  =   t_rd_wen?i_imem_rdata[11:7]:5'b0;         
-assign o_retire_rd_wdata  =   i_dmem_alu_muxout_data;        
-assign o_retire_pc        =   PC_current_val;         
-assign o_retire_next_pc   =   PC_current_val + 4;   //Need to be modified based on Branch and Jump instructions   
+// ///TODO - To change all the reture signals to the latest values pipelined
+// assign o_retire_halt      = t_clu_halt;
+// assign o_retire_valid     = 1;
+// assign o_retire_inst      =   i_imem_rdata;         
+// assign o_retire_trap      =   0; //Temporary assignment - Need to be modified         
+// assign o_retire_rs1_raddr =   i_imem_rdata[19:15];   // TODO - When to retire - Do we need to get it from the pipeline      
+// assign o_retire_rs1_rdata =   o_rs1_rdata;           // TODO - When to retire - Do we need to get it from the pipeline 
+// assign o_retire_rs2_raddr =   i_imem_rdata[24:20];   // TODO - When to retire - Do we need to get it from the pipeline 
+// assign o_retire_rs2_rdata =   t_rs2_rdata;           // TODO - When to retire - Do we need to get it from the pipeline 
+// assign o_retire_rd_waddr  =   t_rd_wen?i_imem_rdata[11:7]:5'b0;         
+// assign o_retire_rd_wdata  =   i_dmem_alu_muxout_data;        
+// assign o_retire_pc        =   PC_current_val;         
+// assign o_retire_next_pc   =   PC_current_val + 4;   //Need to be modified based on Branch and Jump instructions   
 
 // DUT Instantiations
 // Fetch Section
 fetch fetch_inst(
     .clk(i_clk),
     .rst_n(i_rst),
-    //.i_clu_branch(t_clu_branch), //TODO - Needs to update with the 3rd pipeline input of the Branch control signal - NOT NEEDED ANY MORE AS WE ARE SENDING OUT AN ANDED SIGNAL
-    .i_clu_halt(t_clu_halt),
+    //.i_clu_branch(t_clu_branch), //TODO - DONE - Needs to update with the 3rd pipeline input of the Branch control signal - NOT NEEDED ANY MORE AS WE ARE SENDING OUT AN ANDED SIGNAL
+    .i_clu_halt(t_clu_halt), // Halt is received afeter being pipelined all the way to MEM_WB (Source MCU)
+    //.i_clu_halt(MEM_WB[141]), // Halt is pipelined all the way to MEM_WB
     //.i_alu_o_Zero(t_alu_o_Zero), // Not required any more as AND is done in MEM Stage
     .i_alu_o_Zero_clu_Branch_and(t_alu_o_Zero_clu_Branch_and), //  MEM_EX Reg ANDED output given to the Fetch
     //.i_imm_o_immediate(t_immediate_out_data), // Removing Imm from fetch and keeping the addition in EX stage
@@ -502,11 +530,14 @@ fetch fetch_inst(
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //TODO : Enable Clear and ready
 reg [95:0]IF_ID;
+//wire IF_ID_flush;
 wire [95:0]IF_ID_temp;
 assign IF_ID_temp = {t_pc_plus_4,PC_current_val,i_imem_rdata};
 always @ (posedge i_clk) begin
     if (i_rst)
             IF_ID <= 95'b0;
+//    else if (IF_ID_flush)
+//            IF_ID <= 95'b0;
     else begin
             IF_ID <= IF_ID_temp;
     end
@@ -519,7 +550,7 @@ assign t_i_imem_to_rf_instr = IF_ID[31:0]; // The Pipelined instruction in the I
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ///////////////////////////////////////////////////////Register File Instance///////////////////////////////////////////////////////
-rf #(.BYPASS_EN(0)) rf(
+rf #(.BYPASS_EN(1)) rf(
     .i_clk(i_clk),
     .i_rst(i_rst),
     .i_rs1_raddr(t_i_imem_to_rf_instr[19:15]), // Replaced it with the pipelined reg out instruction
@@ -531,13 +562,14 @@ rf #(.BYPASS_EN(0)) rf(
     .o_rs2_rdata(t_rs2_rdata) // This signal is going only to the Pipeline ID_EX
 );
 
+wire t_pipeline_clu_halt;
 /////////////////////////////////////////////////////////Control Unit Instance///////////////////////////////////////////////////////
 control_unit control_unit_inst(
     .clk(i_clk),
     .rst_n(i_rst),
     .i_clu_inst(t_i_imem_to_rf_instr), // Replaced it with the pipelined reg out instruction
     .o_clu_Branch(t_clu_branch),
-    .o_clu_halt(t_clu_halt),
+    .o_clu_halt(t_pipeline_clu_halt),
     .o_clu_MemRead(t_dmem_ren),
     .o_clu_MemtoReg(t_clu_MemtoReg),
     .o_clu_ALUOp(t_clu_alu_op),
@@ -573,22 +605,25 @@ imm imm_decode_inst(
 ////////////////#######################################*ID_EX Pipeline Register Implementation*#######################################//////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 20 bit Wire to group all the Control Signal together for pipelining///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//{ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
-//{t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
+//{ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
+//{t_pipeline_clu_halt, t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-wire [19:0] Control_input_ID_EX;
-assign Control_input_ID_EX = {t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
+wire [20:0] Control_input_ID_EX;
+assign Control_input_ID_EX = {t_pipeline_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
                              t_clu_branch,t_clu_branch_instr_alu_sel[1:0],t_clu_alu_op[1:0],t_clu_ALUSrc[1:0],t_clu_lui_auipc_mux_sel[1:0]};
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////{ID_EX[195:176],        ID_EX[175:144], ID_EX[143:112], ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
+/////////{ID_EX[196:176],        ID_EX[175:144], ID_EX[143:112], ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
 ///      {Control Signals[20:0], PC+4,           PC,             o_rs1_rdata[31:0],  t_rs2_rdata[31:0], func7,        func3,        opcode5thbit, t_immediate_out_data,  wr_addr[4:0]}//////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-reg [195:0]ID_EX;
-wire [195:0]ID_EX_temp;
-assign ID_EX_temp = {Control_input_ID_EX[19:0],IF_ID[95:64],IF_ID[63:32],o_rs1_rdata[31:0],t_rs2_rdata[31:0],IF_ID[31:25],IF_ID[14:12],IF_ID[5],t_immediate_out_data[31:0],IF_ID[11:7]};
+reg [196:0]ID_EX;
+//wire ID_IE_flush;
+wire [196:0]ID_EX_temp;
+assign ID_EX_temp = {Control_input_ID_EX[20:0],IF_ID[95:64],IF_ID[63:32],o_rs1_rdata[31:0],t_rs2_rdata[31:0],IF_ID[31:25],IF_ID[14:12],IF_ID[5],t_immediate_out_data[31:0],IF_ID[11:7]};
 always @ (posedge i_clk) begin
     if (i_rst)
-            ID_EX <= 196'b0;
+            ID_EX <= 197'b0;
+//    else if (ID_IE_flush)
+//            ID_EX <= 197'b0;
     else begin
             ID_EX <= ID_EX_temp;
     end
@@ -610,7 +645,13 @@ assign t_lui_auipc_mux_data         = (ID_EX[177:176] == 2'b00)? ID_EX[111:80] :
 assign t_pc_o_rs1_data_mux_pcaddr   = (ID_EX[194]) ? (ID_EX[111:80]) :                                                        // o_rs1_rdata Updated to Reg Data from Pipeline ID_EX
                                        ID_EX[143:112];                                // Select o_rs1_data for jalr instruction else retain pc //PC_current_val  Updated to Reg Data from Pipeline ID_EX     
 
-assign t_pc_o_rs1_data_mux_imm_add_EX_stage_data = t_pc_o_rs1_data_mux_pcaddr + t_immediate_out_data; //Connected to the MEM_EX Pipeline
+assign t_pc_o_rs1_data_mux_imm_add_EX_stage_data = t_pc_o_rs1_data_mux_pcaddr + ID_EX[36:5]; //Connected to the MEM_EX Pipeline
+
+/////////////////////////////////// Branch Flush Implementation ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////// Given the branch is resolved in the Excecute stage, on the next cycle to it we will flush the values from IF_ID, ID_EX, EX_MEM ////////////////////////////////
+// assign IF_ID_flush = (t_alu_o_Zero_clu_Branch_and == 1'b1);
+// assign ID_EX_flush = (t_alu_o_Zero_clu_Branch_and == 1'b1);
+// assign EX_MEM_flush = (t_alu_o_Zero_clu_Branch_and == 1'b1);
 
 ///////////////////////////////////////////ALU Control Instance///////////////////////////////////////// 
 alu_control alu_control_inst( 
@@ -653,22 +694,25 @@ assign t_dmem_mask =    ((ID_EX[191:189] == 3'b000) || (ID_EX[191:189] == 3'b011
 /////////////#######################################*#####################################################################################################################////////
 /////////////#######################################*EX_MEM Pipeline Register Implementation*#######################################//////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
-/////Assigning a 5 bit Wire to group all the Control Signal together for EX_MEM pipeline/////////
-//////////{ t_sign_or_zero_ext_data_mux[2:0], t_rd_wen,    t_dmem_wen,  t_dmem_ren,  t_clu_MemtoReg, t_clu_branch}///////////////////
-//////////{ EX_MEM[113:111],                  EX_MEM[110], EX_MEM[109], EX_MEM[108], EX_MEM[107],    EX_MEM[106]  }///////////////////
+/////Assigning a 9 bit Wire to group all the Control Signal together for EX_MEM pipeline/////////
+//////////{t_pipeline_clu_halt, t_sign_or_zero_ext_data_mux[2:0], t_rd_wen,    t_dmem_wen,  t_dmem_ren,  t_clu_MemtoReg, t_clu_branch}///////////////////
+//////////{EX_MEM[114]        , EX_MEM[113:111],                  EX_MEM[110], EX_MEM[109], EX_MEM[108], EX_MEM[107],    EX_MEM[106]  }///////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
-wire [7:0] Control_input_EX_MEM;
-assign Control_input_EX_MEM = {ID_EX[188:186],ID_EX[195],ID_EX[193],ID_EX[192],ID_EX[185],ID_EX[184]}; // Mapped to the Signals as above description
+wire [8:0] Control_input_EX_MEM;
+assign Control_input_EX_MEM = {ID_EX[196],ID_EX[188:186],ID_EX[195],ID_EX[193],ID_EX[192],ID_EX[185],ID_EX[184]}; // Mapped to the Signals as above description
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////|||{EX_MEM[113:106],             EX_MEM[105:74],                                EX_MEM[73],    EX_MEM[72:69],            EX_MEM[68:37],         EX_MEM[36:5],       EX_MEM[4:0]}|||||///
-///      |||{Control_input_EX_MEM[7:0], t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0], t_alu_o_Zero , t_dmem_mask[3:0]          t_o_alu_result[31:0],  t_rs2_rdata[31:0],  wr_addr[4:0]|||||///
+/////////|||{EX_MEM[114:106],             EX_MEM[105:74],                                EX_MEM[73],    EX_MEM[72:69],            EX_MEM[68:37],         EX_MEM[36:5],       EX_MEM[4:0]}|||||///
+///      |||{Control_input_EX_MEM[8:0], t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0], t_alu_o_Zero , t_dmem_mask[3:0]          t_o_alu_result[31:0],  t_rs2_rdata[31:0],  wr_addr[4:0]|||||///
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-reg [113:0]EX_MEM;
-wire [113:0]EX_MEM_temp;
-assign EX_MEM_temp = {Control_input_EX_MEM[7:0],t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0],t_alu_o_Zero,t_dmem_mask[3:0],t_o_alu_result[31:0],ID_EX[79:48],ID_EX[4:0]};
+reg [114:0]EX_MEM;
+//wire EX_MEM_flush;
+wire [114:0]EX_MEM_temp;
+assign EX_MEM_temp = {Control_input_EX_MEM[8:0],t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0],t_alu_o_Zero,t_dmem_mask[3:0],t_o_alu_result[31:0],ID_EX[79:48],ID_EX[4:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
-            EX_MEM <= 114'b0;
+            EX_MEM <= 115'b0;
+//    else if (EX_MEM_flush)
+//            EX_MEM <= 115'b0;
     else begin
             EX_MEM <= EX_MEM_temp;
     end
@@ -717,6 +761,11 @@ assign o_dmem_mask = EX_MEM[72:69]; // Changed it to value coming from MEM_EX Pi
 
 /////////############################################################################################################################################################////////
 ////////////#######################################*MEM_WB Pipeline Register Implementation*#######################################//////////////////////////////////////////
+/////Assigning a 71 bit Wire to group all the RETIRE Signals together for MEM_WB pipeline/////////
+///////////###{t_pipeline_clu_halt,  o_dmem_ren,  o_dmem_wen,  o_dmem_mask[3:0], o_dmem_addr[31:0], o_dmem_wdata[31:0]}####////////////
+/////////#####{MEM_WB[141]        ,  MEM_WB[140], MEM_WB[139], MEM_WB[138:135],  MEM_WB[134:103],   MEM_WB[102:71]    }#######////////////
+wire [70:0] retire_bus;
+assign retire_bus = {EX_MEM[114],o_dmem_ren,o_dmem_wen,o_dmem_mask[3:0],o_dmem_addr[31:0],o_dmem_wdata[31:0]};
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 2 bit Wire to group all the Control Signal together for MEM_WB pipeline/////////
 //////////{      t_rd_wen,         t_clu_MemtoReg  }/////////////////////////////////////////////
@@ -725,15 +774,18 @@ assign o_dmem_mask = EX_MEM[72:69]; // Changed it to value coming from MEM_EX Pi
 wire [1:0] Control_input_MEM_WB;
 assign Control_input_MEM_WB = {EX_MEM[110],EX_MEM[107]}; // Mapped to the Signals as in above description
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////|||{MEM_WB[70:69],              MEM_WB[68:37],                                   MEM_WB[36:5],                      ,        MEM_WB[4:0]}|||||//////////////////
-///      |||{Control_input_MEM_WB[1:0],  i_dmem_rdata_sign_or_zero_ext_mux_data[31:0]    (EX_MEM[68:37]/t_o_alu_result[31:0]),  (EX_MEM[4:0]/wr_addr[4:0])|||||//////////
+/////////|||{MEM_WB[141:71]    MEM_WB[70:69],              MEM_WB[68:37],                                   MEM_WB[36:5],                      ,        MEM_WB[4:0]}|||||//////////////////
+///      |||{retire_bus[70:0], Control_input_MEM_WB[1:0],  i_dmem_rdata_sign_or_zero_ext_mux_data[31:0]    (EX_MEM[68:37]/t_o_alu_result[31:0]),  (EX_MEM[4:0]/wr_addr[4:0])|||||//////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-reg [70:0]MEM_WB;
-wire [70:0]MEM_WB_temp;
-assign MEM_WB_temp = {Control_input_MEM_WB[1:0],i_dmem_rdata_sign_or_zero_ext_mux_data[31:0],EX_MEM[68:37],EX_MEM[4:0]};
+reg [141:0]MEM_WB;
+//wire MEM_WB_flush;
+wire [141:0]MEM_WB_temp;
+assign MEM_WB_temp = {retire_bus[70:0],Control_input_MEM_WB[1:0],i_dmem_rdata_sign_or_zero_ext_mux_data[31:0],EX_MEM[68:37],EX_MEM[4:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
-            MEM_WB <= 71'b0;
+            MEM_WB <= 142'b0;
+//    else if (MEM_WB_flush)
+//            MEM_WB <= 140'b0;
     else begin
             MEM_WB <= MEM_WB_temp;
     end
@@ -743,6 +795,37 @@ assign i_dmem_alu_muxout_data                     =    MEM_WB[69] ? MEM_WB[68:37
 assign t_i_rd_waddr                               =    MEM_WB[4:0]; // Pipeline Register Write Address (Source Instruction)
 assign t_i_rd_wen                                 =    MEM_WB[70]; // Pipelined Register Write Enable  (Source Control Unit)
 ////////////////////////////////////////////////////////////////////////////////////////////////
+
+//New Phase-5 Wires being assigned from the MEM_WB Pipeline register as instructed in the Phase 5 Specification
+// The 32-bit data memory address accessed by the instruction.
+assign o_retire_dmem_addr = MEM_WB[134:103];
+// The byte masked used for the data memory access.
+assign o_retire_dmem_mask = o_dmem_mask[3:0];
+// Asserted if the instruction performed a read (load) from data memory.
+assign o_retire_dmem_ren = MEM_WB[140];
+// Asserted if the instruction performed a write (store) to data memory.
+assign o_retire_dmem_wen = MEM_WB[139];
+// The 32-bit data written to memory by a store instruction.
+assign o_retire_dmem_wdata = MEM_WB[102:71] ;
+// The 32-bit data read from memory by a load instruction.
+assign o_retire_dmem_rdata = MEM_WB[68:37]; // The dmem rdata that is getting stored at MEM_WB pipeline for write back to RF
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+assign o_retire_halt      =   MEM_WB[141]; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
+assign o_retire_valid     =   1;
+assign o_retire_inst      =   i_imem_rdata;
+assign o_retire_trap      =   0; //Temporary assignment - Need to be modified //TODO
+assign o_retire_rs1_raddr =   t_i_imem_to_rf_instr[19:15];         
+assign o_retire_rs1_rdata =   o_rs1_rdata;            
+assign o_retire_rs2_raddr =   t_i_imem_to_rf_instr[24:20];  
+assign o_retire_rs2_rdata =   t_rs2_rdata;           
+assign o_retire_rd_waddr  =   t_i_rd_wen?MEM_WB[4:0]:5'b0;
+assign o_retire_rd_wdata  =   i_dmem_alu_muxout_data;         
+assign o_retire_pc        =   PC_current_val;                 
+assign o_retire_next_pc   =   PC_current_val + 4;   //TODO - Need to be modified based on Branch and Jump instructions ?? - YES TODO!!!!
+
+assign t_clu_halt = MEM_WB[141];
 
 endmodule
 
