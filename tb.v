@@ -62,13 +62,16 @@ module hart_tb ();
     reg [7:0] dmem [0:1023];
 
     // Instruction memory read.
-    always @(*) begin
+    always @(posedge clk) begin
+       //if(rst)
+       //    imem_rdata <= 0;
+       //else 
         imem_rdata <= {imem[imem_raddr + 3], imem[imem_raddr + 2], imem[imem_raddr + 1], imem[imem_raddr + 0]};
     end
 
     // Data memory read. Masks are ignored since it is always safe
     // to access the full bytes in this memory.
-    always @(*) begin
+    always @(posedge clk) begin
         if (dmem_ren)
             dmem_rdata <= {dmem[dmem_addr + 3], dmem[dmem_addr + 2], dmem[dmem_addr + 1], dmem[dmem_addr + 0]};
         else
@@ -95,8 +98,8 @@ module hart_tb ();
         rst = 0;
 
         // Open the waveform file.
-        $dumpfile("hart.vcd");
-        $dumpvars(0, hart_tb);
+        //$dumpfile("hart.vcd");
+        //$dumpvars(0, hart_tb);
 
         // Load the test program into memory at address 0.
         $display("Loading program.");
