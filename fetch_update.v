@@ -58,7 +58,7 @@ module control_unit(
     output wire [2:0]o_sign_or_zero_ext_data_mux    // This signal will go to 5:1 MUX which will choose between ZERO extend , SIGN EXTEND or NO EXTEND on the read data from the datamem - ONLY FOR LOAD
 );
 
-assign o_clu_Branch =   ((i_clu_inst[6:0] == 7'b110_0011)|| (i_clu_inst[6:0] == 7'b110_1111) || (i_clu_inst[6:0] == 7'b110_0111)); // Branch enabled for BRANCH , JAL and JALR instruction types
+assign o_clu_Branch =   ((i_clu_inst[6:0] == 7'b110_0011)|| (i_clu_inst[6:0] == 7'b110_1111) || (i_clu_inst[6:0] == 7'b110_0111))?1'b1 : 1'b0; // Branch enabled for BRANCH , JAL and JALR instruction types
 
 assign o_clu_halt =     (i_clu_inst[6:0] == 7'b111_0011); // Halt
 
@@ -101,7 +101,8 @@ assign o_clu_branch_instr_alu_sel  =    (i_clu_inst[6:0] == 7'b110_0011)? (     
                                         (i_clu_inst[14:12] == 3'b110)? 2'b10  : //bltu
                                         (i_clu_inst[14:12] == 3'b111)? 2'b11  : 2'bxx) : //bgeu
                                         ((i_clu_inst[6:0] == 7'b110_1111) || (i_clu_inst[6:0] == 7'b110_0111)) ?  2'b01 : // JAl and JALR - forcing to ~o_eq check which is always true for PC+4 vs 32'b0
-                                        2'bxx;
+                                        //2'bxx; //SREERAJ
+                                        2'b00;
 
 assign o_clu_lui_auipc_mux_sel =        (i_clu_inst[6:0] == 7'b011_0111) ? 2'b01 : // LUI
                                         (i_clu_inst[6:0] == 7'b001_0111) ? 2'b10 : // AUICP
@@ -512,7 +513,10 @@ reg [95:0]IF_ID;
 //wire IF_ID_flush;
 wire [95:0]IF_ID_temp;
 //assign IF_ID_temp = {t_pc_plus_4,PC_current_val,i_imem_rdata};
-assign IF_ID_temp = {i_imem_rdata[31:0],t_pc_plus_4[31:0],PC_current_val[31:0]};
+wire [31:0] temp_i_imem_rdata;
+assign temp_i_imem_rdata = (^i_imem_rdata === 1'bx) ? 32'h0 : i_imem_rdata[31:0];
+//assign IF_ID_temp = {i_imem_rdata[31:0],t_pc_plus_4[31:0],PC_current_val[31:0]};
+assign IF_ID_temp = {temp_i_imem_rdata[31:0],t_pc_plus_4[31:0],PC_current_val[31:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
             IF_ID <= 96'b0;
