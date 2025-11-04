@@ -33,3 +33,4 @@
 10. Do I have to pipeline the halt signal? - I think Yes - Because or else the instructions in the pipeline ahead will not get executed
 11. Do we use the pipeline to store reset values to the control signals?
 12. Make sure Don't cares are XXX in the logics- We can save area
+13. o_retire_valid - Need to add this logic (~stall and valid data at WB)
