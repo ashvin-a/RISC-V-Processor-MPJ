@@ -18,7 +18,6 @@
 //[Q] DO we have Zero and Overflow as output in ALU?
 // [Q] Both in case of o_slt and o_eq is it expected to be connected to Zero output?
 
-
 ////Project Phase 5
 
 1.  What should be the values of the register fields which are not being assigned in the next clock?
@@ -32,5 +31,6 @@
 9.  When do you want to retire an instruction? - o_retire_inst? (Similarly all other retire signals?)
 10. Do I have to pipeline the halt signal? - I think Yes - Because or else the instructions in the pipeline ahead will not get executed
 11. Do we use the pipeline to store reset values to the control signals?
-12. Make sure Don't cares are XXX in the logics- We can save area
+12. Make sure Don't cares are XXX in the logics- We can save area - Also enforce Dont care case
 13. o_retire_valid - Need to add this logic (~stall and valid data at WB)
+14. Make sure to check we are meeting the 5 clock cycles requirement.
