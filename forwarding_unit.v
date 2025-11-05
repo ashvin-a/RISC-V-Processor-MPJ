@@ -22,7 +22,6 @@ assign o_forward_A =
     (i_clu_RegWrite_MEMWB && (i_rd_MEMWB != 0) && (i_rd_MEMWB == i_rs1_IDEX_data)) ? 2'b01 : // MEM-to-EX
     2'b00; // No forwarding
 
-
 assign o_forward_B = 
     ((i_clu_RegWrite_EXMEM == 1 && i_rd_EXMEM != 0) && (i_rd_EXMEM == i_rs2_IDEX_data)) ?  (2'b10): // EX-to-EX Forwarding for rs2
     ((i_clu_RegWrite_MEMWB == 1 && i_rd_MEMWB != 0) && (i_rd_MEMWB == i_rs2_IDEX_data)) ?  (2'b01):// MEM-to-EX Forwarding for rs2
@@ -32,6 +31,5 @@ assign o_forward_B =
 assign o_forward_store = ((i_clu_MemRead_EXMEM == 1) && (i_clu_MemWrite_EXMEM == 1)) ? 1 : 0;
     // This condition is incomplete. Need to check rs1 and rs2 data and other stuffs 🚶‍♂️.
     // TODO: Add conditions to prioritize EX/MEM over MEM/WB so that we get the latest data.
-
 
 endmodule
