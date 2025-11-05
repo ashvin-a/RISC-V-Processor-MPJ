@@ -787,6 +787,43 @@ assign t_i_rd_waddr                               =    MEM_WB[4:0]; // Pipeline 
 assign t_i_rd_wen                                 =    MEM_WB[38]; // Pipelined Register Write Enable  (Source Control Unit)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////Forwarding Unit Instance/////////////////////////////////////////
+wire [31:0] t_rs1_IDEX_data;
+wire [31:0] t_rs2_IDEX_data;
+wire [4:0] t_rd_EXMEM;
+wire [4:0] t_rd_MEMWB;
+wire t_rd_wen_EXMEM;
+wire t_rd_wen_MEMWB;
+wire t_dmem_wen_forwarding;
+wire t_dmem_ren_forwarding;
+wire t_forward_A;
+wire t_forward_B;
+wire t_forward_store;
+
+assign t_rs1_IDEX_data = ID_EX[111:80];
+assign t_rs2_IDEX_data = ID_EX[79:48];
+assign t_rd_EXMEM = EX_MEM[4:0];
+assign t_rd_MEMWB = MEM_WB[4:0];
+assign t_rd_wen_EXMEM = EX_MEM[110];
+assign t_rd_wen_MEMWB =  MEM_WB[38];
+assign t_dmem_wen_forwarding = EX_MEM[109];
+assign t_dmem_ren_forwarding =  EX_MEM[108];
+
+forwarding_unit forwarding_inst(
+    .i_rs1_IDEX_data(t_rs1_IDEX_data[4:0]),
+    .i_rs2_IDEX_data(t_rs2_IDEX_data[4:0]),
+    .i_rd_EXMEM(t_rd_EXMEM),
+    .i_rd_MEMWB(t_rd_MEMWB), 
+    .i_clu_RegWrite_EXMEM(t_rd_wen_EXMEM),
+    .i_clu_RegWrite_MEMWB(t_rd_wen_MEMWB),
+    .i_clu_MemWrite_EXMEM(t_dmem_wen_forwarding),
+    .i_clu_MemRead_EXMEM(t_dmem_ren_forwarding),
+    .o_forward_A(t_forward_A), 
+    .o_forward_B(t_forward_B),
+    .o_forward_store(t_forward_store) 
+);
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 //New Phase-5 Wires being assigned from the MEM_WB Pipeline register as instructed in the Phase 5 Specification
 // The 32-bit data memory address accessed by the instruction.
 assign o_retire_dmem_addr = MEM_WB[102:71];
