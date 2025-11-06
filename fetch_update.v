@@ -494,6 +494,23 @@ wire [31:0] t_pc_o_rs1_data_mux_imm_add_EX_stage_data; //TODO - Should go to EX/
 wire [31:0] f_rs2_rdata;
 wire [31:0] t_o_alu_result; // Getting the Alu result before pipelining
 
+////////////////////////////////////////Phase 5 - Forwarding Unit Instance/////////////////////////////////////////
+wire [31:0] fwd_ID_EX_o_rs1_rdata;
+wire [31:0] fwd_ID_EX_o_rs2_rdata;
+wire [4:0] t_rd_waddr_EXMEM;
+wire [4:0] t_rd_waddr_MEMWB;
+wire t_rd_wen_EXMEM;
+wire t_rd_wen_MEMWB;
+wire t_dmem_wen_forwarding;
+wire t_dmem_ren_forwarding;
+wire [1:0]t_forward_A;
+wire [1:0]t_forward_B;
+wire t_forward_store;
+wire [31:0] fwd_EX_MEM_o_alu_result;
+wire [31:0] fwd_muxout_Adata;
+wire [31:0] fwd_muxout_Bdata;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // DUT Instantiations
 // Fetch Section
 fetch fetch_inst(
@@ -536,8 +553,8 @@ fetch fetch_inst(
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////*IF_ID Pipeline Register Implementation*/////////////////////////////////////////////////////////////////////
-/////////////////////////////////////{ t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
-/////////////////////////////////    {  IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
+/////////////////////////////////////{t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
+/////////////////////////////////    {IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //TODO : Enable Clear and ready
 reg [63:0]IF_ID;
@@ -545,8 +562,6 @@ wire IF_ID_write_en;
 wire IF_ID_flush;
 wire [63:0]IF_ID_temp;
 //assign IF_ID_temp = {t_pc_plus_4,PC_current_val,i_imem_rdata};
-wire [31:0] temp_i_imem_rdata;
-assign temp_i_imem_rdata = (^i_imem_rdata === 1'bx) ? 32'h0 : i_imem_rdata[31:0];
 //assign IF_ID_temp = {i_imem_rdata[31:0],t_pc_plus_4[31:0],PC_current_val[31:0]};
 assign IF_ID_temp = {t_pc_plus_4[31:0],PC_current_val[31:0]};
 always @ (posedge i_clk) begin
@@ -557,7 +572,7 @@ always @ (posedge i_clk) begin
     else if (IF_ID_write_en)
             IF_ID <= IF_ID_temp;
     end
-
+end
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // wire [31:0] t_i_imem_to_rf_instr;
@@ -566,17 +581,16 @@ always @ (posedge i_clk) begin
 // //assign t_i_imem_to_rf_instr = i_rst? 32'h0000_0013 : i_imem_rdata[31:0]; //NOT pipelining any more (To accomodate 1 clock cycle delay of the INSTR MEM)
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+wire [31:0] temp_i_imem_rdata;
+assign temp_i_imem_rdata = (^i_imem_rdata === 1'bx) ? 32'h0 : i_imem_rdata[31:0];
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 wire [31:0] t_i_imem_to_rf_instr;
 //assign t_i_imem_to_rf_instr = IF_ID[31:0]; // The Pipelined instruction in the ID Stage
-//assign t_i_imem_to_rf_instr = i_imem_rdata[31:0]; //NOT pipelining any more (To accomodate 1 clock cycle delay of the INSTR MEM)
-assign t_i_imem_to_rf_instr = temp_i_imem_rdata[31:0]; //NOT pipelining any more (To accomodate 1 clock cycle delay of the INSTR MEM)
+assign t_i_imem_to_rf_instr = temp_i_imem_rdata; //NOT pipelining any more (To accomodate 1 clock cycle delay of the INSTR MEM)
 //assign t_i_imem_to_rf_instr = i_rst? 32'h0000_0013 : i_imem_rdata[31:0]; //NOT pipelining any more (To accomodate 1 clock cycle delay of the INSTR MEM)
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 ///////////////////////////////////////////////////////Register File Instance///////////////////////////////////////////////////////
 rf #(.BYPASS_EN(1)) rf(
     .i_clk(i_clk),
@@ -593,8 +607,6 @@ rf #(.BYPASS_EN(1)) rf(
 wire t_pipeline_clu_halt;
 /////////////////////////////////////////////////////////Control Unit Instance///////////////////////////////////////////////////////
 control_unit control_unit_inst(
-   // .clk(i_clk),
-   // .rst(i_rst),
     .i_clu_inst(t_i_imem_to_rf_instr), // Replaced it with the pipelined reg out instruction
     .o_clu_Branch(t_clu_branch),
     .o_clu_halt(t_pipeline_clu_halt),
@@ -660,16 +672,35 @@ always @ (posedge i_clk) begin
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////MUXES in  the EX Stage//////////////////////////////////////////////////////
 // TODO : ALL THE MUX INPUTS ARE NOT UPDATED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-assign rs2_rdata_imm_mux_data       = (ID_EX[179:178] == 2'b00) ? 32'b0 : 
-                                      (ID_EX[179:178] == 2'b01) ? ID_EX[36:5]  : // t_immediate_out_data - Updated to Reg Data from Pipileine ID_EX
-                                      (ID_EX[179:178] == 2'b10) ? ID_EX[79:48] : // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
-                                       ID_EX[79:48];                             // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
+// assign rs2_rdata_imm_mux_data       = (ID_EX[179:178] == 2'b00) ? 32'b0 : 
+//                                       (ID_EX[179:178] == 2'b01) ? ID_EX[36:5]  : // t_immediate_out_data - Updated to Reg Data from Pipileine ID_EX
+//                                       (ID_EX[179:178] == 2'b10) ? ID_EX[79:48] : // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
+//                                        ID_EX[79:48];                             // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
 
-assign t_lui_auipc_mux_data         = (ID_EX[177:176] == 2'b00)? ID_EX[111:80] :  //Default      //o_rs1_rdata     Updated to Reg Data from Pipileine ID_EX
+//TODO - To update for the STORE Scenario - in Forwarding - MUX the the immediate out value before giving it to ALU
+// To check oforwardB condition here betweem forwarded data and the ID_EX[36:5] data
+wire [31:0] fwd_t_rs2_rdata; // This the STORE ONLY WRITE DATA COMING FROM RF RS2 Port all the way pipelined till DMEM
+assign fwd_t_rs2_rdata  =   (t_forward_B == 2'b00 ) ? ID_EX[79:48] : //Default Condition - No Forwarding
+                            (t_forward_B == 2'b01 || t_forward_B == 2'b10) ? fwd_muxout_Bdata : // Forwarding - Both (EX-EX and MEM- EX)
+                            32'bxx;
+
+///WORK IN PROGRESS TODO!!                
+assign rs2_rdata_imm_mux_data       = (ID_EX[179:178] == 2'b00) ? 32'b0 : 
+                                      (ID_EX[179:178] == 2'b01) ? ID_EX[36:5]  : // t_immediate_out_data     - Updated to Reg Data from Pipileine ID_EX
+                                      (ID_EX[179:178] == 2'b10) ? fwd_muxout_Bdata : // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
+                                       fwd_muxout_Bdata;                             // t_rs2_rdata          - Updated to Reg Data from Pipileine ID_EX
+// assign t_lui_auipc_mux_data         = (ID_EX[177:176] == 2'b00)? ID_EX[111:80] :  //Default      //o_rs1_rdata     Updated to Reg Data from Pipileine ID_EX
+//                                       (ID_EX[177:176] == 2'b01)? 32'b0 :          //LUI     
+//                                       (ID_EX[177:176] == 2'b10)? ID_EX[143:112] : //AUIPC        //PC_current_val  Updated to Reg Data from Pipileine ID_EX
+//                                       (ID_EX[177:176] == 2'b11)? ID_EX[175:144] : //Jal, Jalr    //t_pc_plus_4     Updated to Reg Data from Pipileine ID_EX
+//                                       ID_EX[111:80];                                                      //o_rs1_rdata     Updated to Reg Data from Pipileine ID_EX    
+
+assign t_lui_auipc_mux_data         = (ID_EX[177:176] == 2'b00)? fwd_muxout_Adata :  //Default      //o_rs1_rdata     Updated to Reg Data from Pipileine ID_EX
                                       (ID_EX[177:176] == 2'b01)? 32'b0 :          //LUI     
                                       (ID_EX[177:176] == 2'b10)? ID_EX[143:112] : //AUIPC        //PC_current_val  Updated to Reg Data from Pipileine ID_EX
                                       (ID_EX[177:176] == 2'b11)? ID_EX[175:144] : //Jal, Jalr    //t_pc_plus_4     Updated to Reg Data from Pipileine ID_EX
-                                      ID_EX[111:80];                                                      //o_rs1_rdata     Updated to Reg Data from Pipileine ID_EX    
+                                      32'bx;   
+
 
 assign t_pc_o_rs1_data_mux_pcaddr   = (ID_EX[194]) ? (ID_EX[111:80]) :                                                        // o_rs1_rdata Updated to Reg Data from Pipeline ID_EX
                                        ID_EX[143:112];                                // Select o_rs1_data for jalr instruction else retain pc //PC_current_val  Updated to Reg Data from Pipeline ID_EX     
@@ -736,7 +767,8 @@ assign Control_input_EX_MEM = {ID_EX[196],ID_EX[188:186],ID_EX[195],ID_EX[193],I
 reg [114:0]EX_MEM;
 //wire EX_MEM_flush;
 wire [114:0]EX_MEM_temp;
-assign EX_MEM_temp = {Control_input_EX_MEM[8:0],t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0],t_alu_o_Zero,t_dmem_mask[3:0],t_o_alu_result[31:0],ID_EX[79:48],ID_EX[4:0]};
+//assign EX_MEM_temp = {Control_input_EX_MEM[8:0],t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0],t_alu_o_Zero,t_dmem_mask[3:0],t_o_alu_result[31:0],ID_EX[79:48],ID_EX[4:0]};
+assign EX_MEM_temp = {Control_input_EX_MEM[8:0],t_pc_o_rs1_data_mux_imm_add_EX_stage_data[31:0],t_alu_o_Zero,t_dmem_mask[3:0],t_o_alu_result[31:0],fwd_t_rs2_rdata[31:0],ID_EX[4:0]};//Updated f_rs2_data to a Muxed out data from the forwarded data from EX
 always @ (posedge i_clk) begin
     if (i_rst)
             EX_MEM <= 115'b0;
@@ -757,8 +789,12 @@ assign t_pc_o_rs1_data_mux_imm_add_data =  EX_MEM[105:74]; // The PC + imm value
 assign o_dmem_wen = EX_MEM[109];
 assign o_dmem_ren = EX_MEM[108];
 assign o_dmem_addr = (EX_MEM[109] || EX_MEM[108]) ? {EX_MEM[68:39],2'b0} : EX_MEM[68:37]; //Only when w_en or ren is set we are to align the addresses //TODO : NEEDS an UPDATE with the MEM_EX  Pipleined out
- 
+
 assign f_rs2_rdata  = EX_MEM[36:5]; // The Pipelined o_rs2_data coming from REG for STORE instruction
+// assign f_rs2_rdata  =   (o_forward_B == 2'b00 ) ? EX_MEM[36:5] : //Default Condition - No Forwarding
+//                         (o_forward_B == 2'b01 || o_forward_B == 2'b10) ? fwd_muxout_Bdata : // Forwarding - Both (EX-EX and MEM- EX)
+//                         32'bxx;
+                        
 // For store instructions only 
 assign o_dmem_wdata =   (EX_MEM[72:69] == 4'b0001) ? {{24{f_rs2_rdata[7]}},f_rs2_rdata[7:0]} :                   // Applicable for sb
                         (EX_MEM[72:69] == 4'b0010) ? {{16{f_rs2_rdata[15]}},f_rs2_rdata[15:8],8'b0} :             // Applicable for sb
@@ -827,79 +863,63 @@ assign t_i_rd_waddr                               =    MEM_WB[4:0]; // Pipeline 
 assign t_i_rd_wen                                 =    MEM_WB[38]; // Pipelined Register Write Enable  (Source Control Unit)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////This is implemented in add-forwarding-unit branch///////////////
-// ////////////////////////////////////////Forwarding Unit Instance/////////////////////////////////////////
-// wire [31:0] fwd_ID_EX_o_rs1_rdata;
-// wire [31:0] fwd_ID_EX_o_rs2_rdata;
-// wire [4:0] t_rd_EXMEM;
-// wire [4:0] t_rd_MEMWB;
-// wire t_rd_wen_EXMEM;
-// wire t_rd_wen_MEMWB;
-// wire t_dmem_wen_forwarding;
-// wire t_dmem_ren_forwarding;
-// wire [1:0]t_forward_A;
-// wire [1:0]t_forward_B;
-// wire t_forward_store;
-// wire [31:0] fwd_EX_MEM_o_alu_result;
-// wire [31:0] fwd_muxout_Adata;
-// wire [31:0] fwd_muxout_Bdata;
-// assign fwd_ID_EX_o_rs1_rdata = ID_EX[111:80];
-// assign fwd_ID_EX_o_rs2_rdata = ID_EX[79:48];
-// assign fwd_EX_MEM_o_alu_result = EX_MEM[68:37];
-// assign t_rd_EXMEM = EX_MEM[4:0];
-// assign t_rd_MEMWB = MEM_WB[4:0];
-// assign t_rd_wen_EXMEM = EX_MEM[110];
-// assign t_rd_wen_MEMWB =  MEM_WB[38];
-// assign t_dmem_wen_forwarding = EX_MEM[109];
-// assign t_dmem_ren_forwarding =  EX_MEM[108];
+////////////////////////////////////////Forwarding Unit Instance/////////////////////////////////////////
 
-// forwarding_unit forwarding_inst(
-//     // (t_i_imem_to_rf_instr[19:15]), => rs1 address
-//     // (t_i_imem_to_rf_instr[24:20]) => rs2 address
-//     .i_rs1_IDEX_data(t_i_imem_to_rf_instr[19:15]),
-//     .i_rs2_IDEX_data(t_i_imem_to_rf_instr[24:20]), // We need the address pof rs1 and rs2. not the data!
-//     .i_rd_EXMEM(t_rd_EXMEM),
-//     .i_rd_MEMWB(t_rd_MEMWB), 
-//     .i_clu_RegWrite_EXMEM(t_rd_wen_EXMEM),
-//     .i_clu_RegWrite_MEMWB(t_rd_wen_MEMWB),
-//     .i_clu_MemWrite_EXMEM(t_dmem_wen_forwarding), //Only for MEM to MEM
-//     .i_clu_MemRead_EXMEM(t_dmem_ren_forwarding),  //Only for MEM to MEM
-//     .o_forward_A(t_forward_A), 
-//     .o_forward_B(t_forward_B),
-//     .o_forward_store(t_forward_store) 
-// );
+assign fwd_EX_MEM_o_alu_result = EX_MEM[68:37];
+assign t_rd_waddr_EXMEM = EX_MEM[4:0]; // Change it to ID
+assign t_rd_waddr_MEMWB = MEM_WB[4:0]; // Change it to EX_MEM
+assign t_rd_wen_EXMEM = EX_MEM[110]; // Change it to ID
+assign t_rd_wen_MEMWB =  MEM_WB[38]; // Change it to EX_MEM
+assign fwd_ID_EX_o_rs1_rdata = ID_EX[111:80];
+assign fwd_ID_EX_o_rs2_rdata = ID_EX[79:48];
 
+assign t_dmem_wen_forwarding = EX_MEM[109]; // To be analyzed TODO
+assign t_dmem_ren_forwarding =  EX_MEM[108]; //To be analyzed TODO
 
-// assign   fwd_muxout_Adata      =    (t_forward_A == 2'b00) ?  fwd_ID_EX_o_rs1_rdata :
-//                                     ((t_forward_A == 2'b01) ?  i_dmem_alu_muxout_data: 
-//                                     ((t_forward_A == 2'b10) ?  fwd_EX_MEM_o_alu_result : fwd_ID_EX_o_rs1_rdata));
+///Change it to IF_ID - Later -- TODO !!!!!
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////Pipeline enabled parallel to the ID_EX Pipeline Only to store the i_rs1_addr and i_rs2_addr///////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////{ ID_EX_FWD_ADDR_PIPE[16:10]               ID_EX_FWD_ADDR_PIPE[9:5]                         ,  ID_EX_FWD_ADDR_PIPE[4:0]};///////////
+///      { t_i_imem_to_rf_instr[6:0]/opcode[6:0]    i_rs2_addr[4:0]/t_i_imem_to_rf_instr[24:20]      ,  i_rs1_addr[4:0]/t_i_imem_to_rf_instr[19:15]}//////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+reg [16:0]ID_EX_FWD_ADDR_PIPE;
+wire [16:0]ID_EX_fwd_addr_pipe_temp;
+assign ID_EX_fwd_addr_pipe_temp = {t_i_imem_to_rf_instr[6:0],t_i_imem_to_rf_instr[24:20],t_i_imem_to_rf_instr[19:15]};//Instruction from IMEM is directly connected to next pipeline
+always @ (posedge i_clk) begin
+    if (i_rst)
+            ID_EX_FWD_ADDR_PIPE <= 17'b0;
+    else begin
+            ID_EX_FWD_ADDR_PIPE <= ID_EX_fwd_addr_pipe_temp;
+    end
+end
 
-// assign   fwd_muxout_Bdata      =    (t_forward_A == 2'b00) ?  fwd_ID_EX_o_rs2_rdata :
-//                                     ((t_forward_A == 2'b01) ?  i_dmem_alu_muxout_data: 
-//                                     ((t_forward_A == 2'b10) ?  fwd_EX_MEM_o_alu_result : fwd_ID_EX_o_rs2_rdata));
-// ////////////////////////////////////////////////////////////////////////////////////////////////
-// ////////////////////////////////////////Changes ends here///////////////////////////////////////
-// ////////////////////////////////////////////////////////////////////////////////////////////////
-
-//// Hazard control Unit Instantiation ////////////
-hazard_control_unit hazard_control_unit_inst (
-    .i_hcu_branch (t_clu_branch),
-    .i_hcu_lui_auipc_mux_sel (t_clu_lui_auipc_mux_sel),
-    .i_hcu_pc_o_rs1_data_mux_imm_add_data(t_pc_o_rs1_data_mux_imm_add_data),
-    .i_hcu_IF_ID_PC_current_val(IF_ID[31:0]),
-    .i_hcu_ID_EX_MemRead(ID_EX[192]),
-    .i_hcu_ID_EX_rd(ID_EX[4:0]),
-    .i_hcu_IF_ID_rs1(t_i_imem_to_rf_instr[19:15]),
-    .i_hcu_IF_ID_rs2(t_i_imem_to_rf_instr[24:20]),
-    .i_hcu_IF_ID_MemWrite(t_dmem_wen),
-    .o_hcu_IF_ID_flush(IF_ID_flush),
-    .o_hcu_ID_EX_flush(ID_EX_flush),
-    .o_hcu_PCWriteEn(t_pc_write_en),
-    .o_hcu_IF_ID_write_en(IF_ID_write_en)
+forwarding_unit forwarding_inst(
+    .i_rs1_IDEX_addr(ID_EX_FWD_ADDR_PIPE[4:0]),
+    .i_rs2_IDEX_addr(ID_EX_FWD_ADDR_PIPE[9:5]),
+    .i_rd_waddr_EXMEM(t_rd_waddr_EXMEM),
+    .i_rd_waddr_MEMWB(t_rd_waddr_MEMWB),
+    .i_clu_RegWrite_EXMEM(t_rd_wen_EXMEM),
+    .i_clu_RegWrite_MEMWB(t_rd_wen_MEMWB),
+    .i_clu_MemWrite_EXMEM(t_dmem_wen_forwarding), //Only for MEM to MEM
+    .i_clu_MemRead_EXMEM(t_dmem_ren_forwarding),  //Only for MEM to MEM
+    .i_opcode(ID_EX_FWD_ADDR_PIPE[16:10]), //Added Opcode
+    .o_forward_A(t_forward_A), 
+    .o_forward_B(t_forward_B),
+    .o_forward_store(t_forward_store) 
 );
 
+assign   fwd_muxout_Adata      =    (t_forward_A == 2'b00) ?  fwd_ID_EX_o_rs1_rdata :
+                                    (t_forward_A == 2'b01) ?  i_dmem_alu_muxout_data:   //MEM to EX
+                                    (t_forward_A == 2'b10) ?  fwd_EX_MEM_o_alu_result : //EX to EX
+                                    fwd_ID_EX_o_rs1_rdata;
 
+assign   fwd_muxout_Bdata      =    (t_forward_B == 2'b00) ?  fwd_ID_EX_o_rs2_rdata :
+                                    (t_forward_B == 2'b01) ?  i_dmem_alu_muxout_data:   //MEM to EX
+                                    (t_forward_B == 2'b10) ?  fwd_EX_MEM_o_alu_result : //EX to EX
+                                    fwd_ID_EX_o_rs2_rdata;
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
