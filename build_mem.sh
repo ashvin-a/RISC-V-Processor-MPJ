@@ -8,7 +8,7 @@ ASM_FILE="program.S"
 
 # Output files
 OBJ_FILE="program.o"
-ELF_FILE="program.elf"
+# ELF_FILE="program.elf"
 BIN_FILE="program.bin"
 MEM_FILE="program.mem"
 
@@ -20,13 +20,10 @@ if ! command -v riscv64-unknown-elf-as &> /dev/null; then
 fi
 
 echo "Assembling $ASM_FILE..."
-riscv64-unknown-elf-as "$ASM_FILE" -o "$OBJ_FILE"
-
-echo "Linking to create $ELF_FILE..."
-riscv64-unknown-elf-ld "$OBJ_FILE" -o "$ELF_FILE"
+riscv64-unknown-elf-as -march=rv32i -mabi=ilp32 "$ASM_FILE" -o "$OBJ_FILE"
 
 echo "Generating raw binary..."
-riscv64-unknown-elf-objcopy -O binary "$ELF_FILE" "$BIN_FILE"
+riscv64-unknown-elf-objcopy -O binary "$OBJ_FILE" "$BIN_FILE"
 
 echo "Converting binary to memory file..."
 xxd -p -c 1 "$BIN_FILE" > "$MEM_FILE"
