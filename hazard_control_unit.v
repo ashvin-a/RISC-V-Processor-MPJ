@@ -39,6 +39,7 @@ module hazard_control_unit(
     input wire [4:0] i_hcu_IF_ID_rs1       ,                       // available in hart as t_i_imem_to_rf_instr[19:15]
     input wire [4:0] i_hcu_IF_ID_rs2      ,                        // available in hart as t_i_imem_to_rf_instr[24:20]
     input wire i_hcu_IF_ID_MemWrite  ,                       // available in hart as t_dmem_wen
+    input wire i_hcu_IF_ID_opcode,                           // available in hart as t_i_imem_to_rf_instr[6:0]
     
     output wire o_hcu_IF_ID_flush,
     output wire o_hcu_ID_EX_flush,
@@ -47,15 +48,25 @@ module hazard_control_unit(
 );
 
 wire control_hazard;
+wire t_hcu_IF_ID_rs1;
+wire t_hcu_IF_ID_rs2;
+wire t_hcu_ID_EX_rd;
+
 assign control_hazard = (i_hcu_branch) ? ( ((i_hcu_lui_auipc_mux_sel == 2'b11)||( i_hcu_pc_o_rs1_data_mux_imm_add_data != i_hcu_IF_ID_PC_current_val)) ? 1'b1 : 1'b0 ) : 1'b0;
 
 wire load_use_hazard;
-assign load_use_hazard = ((i_hcu_ID_EX_MemRead == 1) && ((i_hcu_ID_EX_rd == i_hcu_IF_ID_rs1) || (i_hcu_ID_EX_rd == i_hcu_IF_ID_rs2)) && (i_hcu_ID_EX_rd != 5'b0)) ? 1'b1 : 1'b0;
+assign load_use_hazard = ((i_hcu_ID_EX_MemRead == 1) && ((t_hcu_ID_EX_rd == t_hcu_IF_ID_rs1) || (t_hcu_ID_EX_rd == t_hcu_IF_ID_rs2)) && (t_hcu_ID_EX_rd != 5'b0)) ? 1'b1 : 1'b0;
 
 assign o_hcu_IF_ID_flush =      control_hazard;
 assign o_hcu_PCWriteEn =        ~load_use_hazard;
-assign o_hcu_IF_ID_write_en =   ~load_use_hazard;
+assign o_hcu_IF_ID_write_en =   ~load_use_hazard;       // will I get garbage values in the stall cycle as only IF_ID is disabled
 assign o_hcu_ID_EX_flush =      load_use_hazard || control_hazard;
+
+assign t_hcu_IF_ID_rs1 = ((i_hcu_IF_ID_opcode == 7'b0110111)||(i_hcu_IF_ID_opcode == 7'b0010111)||(i_hcu_IF_ID_opcode == 7'b1101111)) ? 5'b00000 : i_hcu_IF_ID_rs1;
+assign t_hcu_IF_ID_rs2 = ((i_hcu_IF_ID_opcode == 7'b0110011)||(i_hcu_IF_ID_opcode == 7'b0100011)||(i_hcu_IF_ID_opcode == 7'b1100011)) ?  i_hcu_IF_ID_rs2 : 5'b00000;
+assign t_hcu_ID_EX_rd  = ((i_hcu_IF_ID_opcode == 7'b0100011)||(i_hcu_IF_ID_opcode == 7'b1100011)) ? 5'b00000 : i_hcu_ID_EX_rd; 
+
+
 
 endmodule
 
