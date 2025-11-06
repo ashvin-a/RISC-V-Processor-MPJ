@@ -13,8 +13,8 @@ module fetch (
     input  wire [31:0] i_pc_o_rs1_data_mux_imm_add_data,  // Take o_rs1 for JALR instruction and PC for others
     output wire [31:0] o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
     output wire [31:0] o_pc_plus_4,
-    output reg  [31:0] PC,                           // Program Counter register
-    output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
+    output reg  [31:0] PC                           // Program Counter register
+    //output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
 );
     wire [31:0]next_pc;
     wire [31:0]t_pc_plus_4;
@@ -27,7 +27,7 @@ module fetch (
     // Delaying the Reset for one more clock cycle in the TB is not propagating the X but causing Issues in pipelines.
 
     //assign o_instr_mem_rd_addr = next_pc; //Changed from PC -> next_pc
-    
+
     //assign o_instr_mem_rd_addr = PC; //Changed from PC -> next_pc
     
     //wire [31:0] temp_o_instr_mem_rd_addr;
@@ -513,7 +513,8 @@ wire t_forward_store;
 wire [31:0] fwd_EX_MEM_o_alu_result;
 wire [31:0] fwd_muxout_Adata;
 wire [31:0] fwd_muxout_Bdata;
-wire [31:0] t_o_next_pc; //Added for Hazard Control Unit
+//wire [31:0] t_o_next_pc; //Added for Hazard Control Unit
+wire t_id_ex_alu_o_Zero_clu_Branch_and;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -528,8 +529,8 @@ fetch fetch_inst(
     .i_pc_o_rs1_data_mux_imm_add_data(t_pc_o_rs1_data_mux_imm_add_data), //T Connected it to EX/MEM Pipeline register out of the muxed and added data
     .PC(PC_current_val),
     .o_pc_plus_4(t_pc_plus_4),
-    .o_instr_mem_rd_addr(o_imem_raddr),
-    .o_next_pc(t_o_next_pc) //Added for Hazard Control Unit
+    .o_instr_mem_rd_addr(o_imem_raddr)
+    //.o_next_pc(t_o_next_pc) //Added for Hazard Control Unit
 );
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -766,6 +767,10 @@ end
 ////////////////////////////////////////////////////////////////////////////////////////////////
 assign  t_alu_o_Zero_clu_Branch_and = EX_MEM[73] & EX_MEM[106]; // AND of t_clu_branch and t_alu_o_Zero
 ////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+assign t_id_ex_alu_o_Zero_clu_Branch_and = t_alu_o_Zero & ID_EX[184]; //NEW AND FOR CHU Branch prediction
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
 assign t_pc_o_rs1_data_mux_imm_add_data =  EX_MEM[105:74]; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////Muxes - Changing the assignments to receive the data from MEM_EX pipeline///////////
@@ -894,7 +899,7 @@ assign   fwd_muxout_Bdata      =    (t_forward_B == 2'b00) ?  fwd_ID_EX_o_rs2_rd
 hazard_control_unit hazard_control_unit_inst (
     .i_hcu_branch (t_clu_branch), //
     .i_hcu_lui_auipc_mux_sel (t_clu_lui_auipc_mux_sel), 
-    .i_hcu_pc_o_rs1_data_mux_imm_add_data(t_o_next_pc), //t_pc_o_rs1_data_mux_imm_add_data --> t_o_next_pc 
+    //.i_hcu_pc_o_rs1_data_mux_imm_add_data(t_o_next_pc), //t_pc_o_rs1_data_mux_imm_add_data --> t_o_next_pc 
     .i_hcu_IF_ID_PC_current_val(IF_ID[31:0]),
     .i_hcu_ID_EX_MemRead(ID_EX[192]),  //memRead - EX_MEM[108]
     .i_hcu_ID_EX_rd(ID_EX[4:0]),  //rd_addr from ID_EX - EX_MEM[4:0]
@@ -905,7 +910,10 @@ hazard_control_unit hazard_control_unit_inst (
     .o_hcu_ID_EX_flush(ID_EX_flush),
     .o_hcu_PCWriteEn(t_pc_write_en),
     .o_hcu_IF_ID_write_en(IF_ID_write_en),
-    .i_hcu_IF_ID_opcode(t_i_imem_to_rf_instr[6:0]) //Unflopped opcode from instruction - ID_EX_FWD_ADDR_PIPE[16:10]
+    .i_hcu_IF_ID_opcode(t_i_imem_to_rf_instr[6:0]), //Unflopped opcode from instruction - ID_EX_FWD_ADDR_PIPE[16:10]
+    .o_hcu_retire_valid(o_retire_valid),
+    .i_hcu_branch_predictor(t_id_ex_alu_o_Zero_clu_Branch_and) // ANDED value from MEM Stage given to HCU for Control Hazards t_alu_o_Zero_clu_Branch_and--> t_id_ex_alu_o_Zero_clu_Branch_and
+    //.i_hcu_branch_predictor(t_alu_o_Zero_clu_Branch_and) // ANDED value from MEM Stage given to HCU for Control Hazards t_alu_o_Zero_clu_Branch_and--> t_id_ex_alu_o_Zero_clu_Branch_and
 );
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
