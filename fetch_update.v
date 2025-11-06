@@ -926,8 +926,8 @@ assign o_retire_dmem_rdata = i_dmem_rdata_sign_or_zero_ext_mux_data[31:0]; // Th
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-assign o_retire_halt      =   MEM_WB[109]; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
-assign o_retire_valid     =   1;
+//assign o_retire_halt      =   MEM_WB[109]; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
+//assign o_retire_valid     =   1;
 assign o_retire_inst      =   i_imem_rdata;
 assign o_retire_trap      =   0; //Temporary assignment - Need to be modified //TODO
 assign o_retire_rs1_raddr =   t_i_imem_to_rf_instr[19:15];         
@@ -940,5 +940,16 @@ assign o_retire_pc        =   PC_current_val;
 assign o_retire_next_pc   =   PC_current_val + 4;   //TODO - Need to be modified based on Branch and Jump instructions ?? - YES TODO!!!!
 
 assign t_clu_halt = MEM_WB[109];
+
+reg retire_halt;
+always @ (posedge i_clk) begin
+    if (i_rst)
+            retire_halt <= 1'b0;
+    else begin
+            retire_halt <= MEM_WB[109];
+    end
+end
+assign o_retire_halt      =   retire_halt; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
+
 
 endmodule
