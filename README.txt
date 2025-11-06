@@ -22,7 +22,7 @@
 
 1.  What should be the values of the register fields which are not being assigned in the next clock?
 2.  For nop implementation - Do we have to retain the reg value as it is or do we have to propogate something? (To retain the reg value we can just freeze the reg) - it is equal to addi x0 , x0 ,0
-3.  New OPCODE check for nop has to be implemented in MCU.
+3.  New OPCODE check for nop has to be implemented in MCU. - No
 4.  How about I still keep an enable for a single cycle processor? A register Bypass signal?
 5.  Can we reduce the instruction wires to the MCU?
 6.  Add Arrows in the schematic?
@@ -34,3 +34,4 @@
 12. Make sure Don't cares are XXX in the logics- We can save area - Also enforce Dont care case
 13. o_retire_valid - Need to add this logic (~stall and valid data at WB)
 14. Make sure to check we are meeting the 5 clock cycles requirement.
+15. For HCU - to traverse a bubble through the pipelines we can pipeline the load use hazard to all the remaining pieplines and force the reg to be Zero
