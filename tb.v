@@ -63,9 +63,6 @@ module hart_tb ();
 
     // Instruction memory read.
     always @(posedge clk) begin
-       //if(rst)
-       //    imem_rdata <= 0;
-       //else 
         imem_rdata <= {imem[imem_raddr + 3], imem[imem_raddr + 2], imem[imem_raddr + 1], imem[imem_raddr + 0]};
     end
 

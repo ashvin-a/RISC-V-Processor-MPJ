@@ -2,7 +2,6 @@
 // To connect the RETIRE TRACE OUT
 // Check all the Dont care cases I have defined - is it ok to define Dont care
 
-`timescale 1ns/1ps
 /////////////////////////// FETCH MODULE ///////////////////////////
 module fetch (
     input  wire clk,
@@ -13,8 +12,8 @@ module fetch (
     input  wire [31:0] i_pc_o_rs1_data_mux_imm_add_data,  // Take o_rs1 for JALR instruction and PC for others
     output wire [31:0] o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
     output wire [31:0] o_pc_plus_4,
-    output reg  [31:0] PC                           // Program Counter register
-    //output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
+    output reg  [31:0] PC,                           // Program Counter register
+    output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
 );
     wire [31:0]next_pc;
     wire [31:0]t_pc_plus_4;
@@ -31,7 +30,8 @@ module fetch (
     //assign o_instr_mem_rd_addr = PC; //Changed from PC -> next_pc
     
     //wire [31:0] temp_o_instr_mem_rd_addr;
-    assign o_instr_mem_rd_addr = i_pc_write_en? PC : PC - 4 ;
+    //assign o_instr_mem_rd_addr = (i_pc_write_en | !i_clu_halt) ? PC : PC - 4 ;
+    assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4 ;
 
     assign o_pc_plus_4 = t_pc_plus_4;
 
@@ -45,6 +45,9 @@ module fetch (
                 PC <= next_pc;
         end
     end
+
+    assign o_next_pc = next_pc;
+
 endmodule
 
 /////////////////////////// MAIN CONTROL UNIT ///////////////////////////
@@ -513,7 +516,7 @@ wire t_forward_store;
 wire [31:0] fwd_EX_MEM_o_alu_result;
 wire [31:0] fwd_muxout_Adata;
 wire [31:0] fwd_muxout_Bdata;
-//wire [31:0] t_o_next_pc; //Added for Hazard Control Unit
+wire [31:0] t_o_next_pc; //Added for o_nextpc
 wire t_id_ex_alu_o_Zero_clu_Branch_and;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -529,8 +532,8 @@ fetch fetch_inst(
     .i_pc_o_rs1_data_mux_imm_add_data(t_pc_o_rs1_data_mux_imm_add_data), //T Connected it to EX/MEM Pipeline register out of the muxed and added data
     .PC(PC_current_val),
     .o_pc_plus_4(t_pc_plus_4),
-    .o_instr_mem_rd_addr(o_imem_raddr)
-    //.o_next_pc(t_o_next_pc) //Added for Hazard Control Unit
+    .o_instr_mem_rd_addr(o_imem_raddr),
+    .o_next_pc(t_o_next_pc)  //Added for o_nextpc
 );
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -586,12 +589,11 @@ rf #(.BYPASS_EN(1)) rf(
     .o_rs2_rdata(t_rs2_rdata) // This signal is going only to the Pipeline ID_EX
 );
 
-wire t_pipeline_clu_halt;
 /////////////////////////////////////////////////////////Control Unit Instance///////////////////////////////////////////////////////
 control_unit control_unit_inst(
     .i_clu_inst(t_i_imem_to_rf_instr), // Replaced it with the pipelined reg out instruction
     .o_clu_Branch(t_clu_branch),
-    .o_clu_halt(t_pipeline_clu_halt),
+    .o_clu_halt(t_clu_halt),
     .o_clu_MemRead(t_dmem_ren),
     .o_clu_MemtoReg(t_clu_MemtoReg),
     .o_clu_ALUOp(t_clu_alu_op),
@@ -643,10 +645,10 @@ end
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 20 bit Wire to group all the Control Signal together for pipelining///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //{ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
-//{t_pipeline_clu_halt, t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
+//{t_clu_halt         ,  t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 wire [20:0] Control_input_ID_EX;
-assign Control_input_ID_EX = {t_pipeline_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
+assign Control_input_ID_EX = {t_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
                              t_clu_branch,t_clu_branch_instr_alu_sel[1:0],t_clu_alu_op[1:0],t_clu_ALUSrc[1:0],t_clu_lui_auipc_mux_sel[1:0]};
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////{ID_EX[196:176],        ID_EX[175:144],        ID_EX[143:112],             ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
@@ -739,7 +741,7 @@ assign t_dmem_mask =    ((ID_EX[191:189] == 3'b000) || (ID_EX[191:189] == 3'b011
 /////////////#######################################*EX_MEM Pipeline Register Implementation*#######################################//////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 9 bit Wire to group all the Control Signal together for EX_MEM pipeline/////////
-//////////{t_pipeline_clu_halt, t_sign_or_zero_ext_data_mux[2:0], t_rd_wen,    t_dmem_wen,  t_dmem_ren,  t_clu_MemtoReg, t_clu_branch}///////////////////
+//////////{t_clu_halt, t_sign_or_zero_ext_data_mux[2:0], t_rd_wen,    t_dmem_wen,  t_dmem_ren,  t_clu_MemtoReg, t_clu_branch}///////////////////
 //////////{EX_MEM[114]        , EX_MEM[113:111],                  EX_MEM[110], EX_MEM[109], EX_MEM[108], EX_MEM[107],    EX_MEM[106]  }///////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 wire [8:0] Control_input_EX_MEM;
@@ -799,7 +801,7 @@ assign o_dmem_mask = EX_MEM[72:69]; // Changed it to value coming from MEM_EX Pi
 /////////############################################################################################################################################################////////
 ////////////#######################################*MEM_WB Pipeline Register Implementation*#######################################//////////////////////////////////////////
 /////Assigning a 78 bit Wire to group all the RETIRE Signals together for MEM_WB pipeline/////////
-///////////###{t_sign_or_zero_ext_data_mux[2:0], t_dmem_mask[3:0],  t_pipeline_clu_halt,  o_dmem_ren,  o_dmem_wen,  o_dmem_mask[3:0], o_dmem_addr[31:0], o_dmem_wdata[31:0]}####////////////
+///////////###{t_sign_or_zero_ext_data_mux[2:0], t_dmem_mask[3:0],  t_clu_halt         ,  o_dmem_ren,  o_dmem_wen,  o_dmem_mask[3:0], o_dmem_addr[31:0], o_dmem_wdata[31:0]}####////////////
 /////////#####{        MEM_WB[116:114]         , MEM_WB[113:110] ,  MEM_WB[109]        ,  MEM_WB[108], MEM_WB[107], MEM_WB[106:103],  MEM_WB[102:71],   MEM_WB[70:39]    }#######////////////
 wire [77:0] retire_bus;
 assign retire_bus = {EX_MEM[113:111],EX_MEM[72:69],EX_MEM[114],o_dmem_ren,o_dmem_wen,o_dmem_mask[3:0],o_dmem_addr[31:0],o_dmem_wdata[31:0]};
@@ -895,6 +897,7 @@ assign   fwd_muxout_Bdata      =    (t_forward_B == 2'b00) ?  fwd_ID_EX_o_rs2_rd
                                     fwd_ID_EX_o_rs2_rdata;
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+wire o_hcu_retire_valid;
 //// Hazard control Unit Instantiation ////////////
 hazard_control_unit hazard_control_unit_inst (
     .i_hcu_branch (t_clu_branch), //
@@ -911,7 +914,7 @@ hazard_control_unit hazard_control_unit_inst (
     .o_hcu_PCWriteEn(t_pc_write_en),
     .o_hcu_IF_ID_write_en(IF_ID_write_en),
     .i_hcu_IF_ID_opcode(t_i_imem_to_rf_instr[6:0]), //Unflopped opcode from instruction - ID_EX_FWD_ADDR_PIPE[16:10]
-    .o_hcu_retire_valid(o_retire_valid),
+    .o_hcu_retire_valid(o_hcu_retire_valid),
     .i_hcu_branch_predictor(t_id_ex_alu_o_Zero_clu_Branch_and) // ANDED value from MEM Stage given to HCU for Control Hazards t_alu_o_Zero_clu_Branch_and--> t_id_ex_alu_o_Zero_clu_Branch_and
     //.i_hcu_branch_predictor(t_alu_o_Zero_clu_Branch_and) // ANDED value from MEM Stage given to HCU for Control Hazards t_alu_o_Zero_clu_Branch_and--> t_id_ex_alu_o_Zero_clu_Branch_and
 );
@@ -934,30 +937,172 @@ assign o_retire_dmem_rdata = i_dmem_rdata_sign_or_zero_ext_mux_data[31:0]; // Th
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
-//assign o_retire_halt      =   MEM_WB[109]; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
+assign o_retire_halt      =   MEM_WB[109]; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
 //assign o_retire_valid     =   1;
-assign o_retire_inst      =   i_imem_rdata;
+//assign o_retire_inst      =   t_i_imem_to_rf_instr[31:0];
 assign o_retire_trap      =   0; //Temporary assignment - Need to be modified //TODO
-assign o_retire_rs1_raddr =   t_i_imem_to_rf_instr[19:15];         
-assign o_retire_rs1_rdata =   o_rs1_rdata;            
-assign o_retire_rs2_raddr =   t_i_imem_to_rf_instr[24:20];  
-assign o_retire_rs2_rdata =   t_rs2_rdata;           
+//assign o_retire_rs1_raddr =   t_i_imem_to_rf_instr[19:15];         
+//assign o_retire_rs1_rdata =   o_rs1_rdata;            
+//assign o_retire_rs2_raddr =   t_i_imem_to_rf_instr[24:20];  
+//assign o_retire_rs2_rdata =   t_rs2_rdata;           
 assign o_retire_rd_waddr  =   t_i_rd_wen?MEM_WB[4:0]:5'b0;
 assign o_retire_rd_wdata  =   i_dmem_alu_muxout_data;         
-assign o_retire_pc        =   PC_current_val;                 
-assign o_retire_next_pc   =   PC_current_val + 4;   //TODO - Need to be modified based on Branch and Jump instructions ?? - YES TODO!!!!
+//assign o_retire_pc        =   PC_current_val;                 
+//assign o_retire_next_pc   =   PC_current_val + 4;   //TODO - Need to be modified based on Branch and Jump instructions ?? - YES TODO!!!!
 
-assign t_clu_halt = MEM_WB[109];
+//assign t_clu_halt = MEM_WB[109];
 
-reg retire_halt;
-always @ (posedge i_clk) begin
-    if (i_rst)
-            retire_halt <= 1'b0;
-    else begin
-            retire_halt <= MEM_WB[109];
+////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////Valid Signal generated at  IF ID Stage and Pipelined till MEM_WB////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+   reg IF_ID_valid;
+    always @(posedge i_clk) begin
+        if(i_rst) begin
+            IF_ID_valid <= 1'b0; // PRESET = 1
+        end
+        else if (IF_ID_flush)
+            IF_ID_valid <= 1'b0;
+        else begin
+            IF_ID_valid <= 1'b1;
+        end
     end
-end
-assign o_retire_halt      =   retire_halt; // Pipelined the halt from MCU all the way to the last pipeline and to the Design Boundary
 
+    reg ID_EX_o_retire_valid;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                ID_EX_o_retire_valid <= 1'b0;
+        else if (ID_EX_flush)
+           ID_EX_o_retire_valid <= 1'b0;
+        else begin
+                ID_EX_o_retire_valid <= IF_ID_valid;
+        end
+    end
+
+    reg EX_MEM_o_retire_valid;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                EX_MEM_o_retire_valid <= 1'b0;
+        else begin
+                EX_MEM_o_retire_valid <= ID_EX_o_retire_valid;
+        end
+    end
+
+    reg MEM_WB_o_retire_valid;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                MEM_WB_o_retire_valid <= 1'b0;
+        else begin
+                MEM_WB_o_retire_valid <= EX_MEM_o_retire_valid;
+        end
+    end
+////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////instruction pipelined from ID_EX to MEM_WB for retiring////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+    reg [31:0]ID_EX_o_retire_inst;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                ID_EX_o_retire_inst <= 32'b0;
+        else begin
+                ID_EX_o_retire_inst <= t_i_imem_to_rf_instr[31:0];
+        end
+    end
+
+    reg [31:0]EX_MEM_o_retire_inst;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                EX_MEM_o_retire_inst <= 32'b0;
+        else begin
+                EX_MEM_o_retire_inst <= ID_EX_o_retire_inst;
+        end
+    end
+
+    reg [31:0]MEM_WB_o_retire_inst;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                MEM_WB_o_retire_inst <= 32'b0;
+        else begin
+                MEM_WB_o_retire_inst <= EX_MEM_o_retire_inst;
+        end
+    end
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/////nextpc for IF and ID///////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+//t_o_next_pc;
+
+   reg [31:0]IF_ID_o_next_pc;
+    always @(posedge i_clk) begin
+        if(i_rst) begin
+            IF_ID_o_next_pc <= 32'b0;
+        end
+        else begin
+            IF_ID_o_next_pc <= t_o_next_pc;
+        end
+    end
+
+    reg [31:0]ID_EX_o_next_pc;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                ID_EX_o_next_pc <= 32'b0;
+        else begin
+                ID_EX_o_next_pc <= IF_ID_o_next_pc;
+        end
+    end
+////////////////////////////////////////////////////////////////////////////////////////////////
+/////pc and nextpc///////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+    reg [63:0]EX_MEM_o_retire_pc_pc4;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                EX_MEM_o_retire_pc_pc4 <= 64'b0;
+        else begin
+                EX_MEM_o_retire_pc_pc4 <= {ID_EX_o_next_pc,ID_EX[143:112]}; //nextpc and PC
+        end
+    end
+
+    reg [63:0]MEM_WB_o_retire_pc_pc4;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                MEM_WB_o_retire_pc_pc4 <= 64'b0;
+        else begin
+                MEM_WB_o_retire_pc_pc4 <= EX_MEM_o_retire_pc_pc4;
+        end
+    end
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+    //ID_EX[111:80],      ID_EX[79:48],    
+    //o_rs1_rdata[31:0],  t_rs2_rdata[31:0]
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+    reg [63:0]EX_MEM_o_retire_o_rs1_rs2_data;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                EX_MEM_o_retire_o_rs1_rs2_data <= 64'b0;
+        else begin
+                //EX_MEM_o_retire_o_rs1_rs2_data <= {ID_EX[111:80],ID_EX[79:48]}; // To be changed to ALU operand inouts and outputs
+                EX_MEM_o_retire_o_rs1_rs2_data <= {rs2_rdata_imm_mux_data,t_lui_auipc_mux_data}; // To be changed to ALU operand inouts and outputs
+        end
+    end
+
+    reg [63:0]MEM_WB_o_retire_o_rs1_rs2_data;
+    always @ (posedge i_clk) begin
+        if (i_rst)
+                MEM_WB_o_retire_o_rs1_rs2_data <= 64'b0;
+        else begin
+                MEM_WB_o_retire_o_rs1_rs2_data <= EX_MEM_o_retire_o_rs1_rs2_data;
+        end
+    end
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+assign o_retire_valid     =   MEM_WB_o_retire_valid;
+assign o_retire_rs1_raddr =   MEM_WB_o_retire_inst[19:15];         
+assign o_retire_rs1_rdata =   MEM_WB_o_retire_o_rs1_rs2_data[31:0]; //rs1_data         
+assign o_retire_rs2_raddr =   MEM_WB_o_retire_inst[24:20];  
+assign o_retire_rs2_rdata =   MEM_WB_o_retire_o_rs1_rs2_data[63:32];  //rs2_data
+assign o_retire_pc        =   MEM_WB_o_retire_pc_pc4[31:0];                 
+assign o_retire_next_pc   =   MEM_WB_o_retire_pc_pc4[63:32];   //TODO - Need to be modified based on Branch and Jump instructions ?? - YES TODO!!!!
+assign o_retire_inst      =   MEM_WB_o_retire_inst[31:0];
 
 endmodule
