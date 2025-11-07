@@ -32,7 +32,7 @@ module hazard_control_unit(
     
     input wire i_hcu_branch,                                 // available in hart as t_clu_branch
     input wire [1:0] i_hcu_lui_auipc_mux_sel,                      // available in hart as t_clu_lui_auipc_mux_sel
-    input wire [31:0] i_hcu_pc_o_rs1_data_mux_imm_add_data ,        // available in hart as t_pc_o_rs1_data_mux_imm_add_data
+    //input wire [31:0] i_hcu_pc_o_rs1_data_mux_imm_add_data ,        // available in hart as t_pc_o_rs1_data_mux_imm_add_data
     input wire [31:0] i_hcu_IF_ID_PC_current_val      ,             // available in hart as IF_ID[31:0] 
     input wire i_hcu_ID_EX_MemRead         ,                 // available in hart as t_dmem_ren
     input wire [4:0] i_hcu_ID_EX_rd            ,                   // available in hart as ID_EX[4:0]

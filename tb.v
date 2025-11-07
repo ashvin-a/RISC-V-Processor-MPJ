@@ -1,4 +1,3 @@
-`timescale 1ps/1ps
 module hart_tb ();
     // Synchronous active-high reset.
     reg         clk, rst;
