@@ -35,3 +35,10 @@
 13. o_retire_valid - Need to add this logic (~stall and valid data at WB)
 14. Make sure to check we are meeting the 5 clock cycles requirement.
 15. For HCU - to traverse a bubble through the pipelines we can pipeline the load use hazard to all the remaining pieplines and force the reg to be Zero
+16. Check all the Dont care cases I have defined - is it ok to define Dont care
+17 . How should we flush the data? Instead of 32'h0 ? Should we just give the Hex equivalent of addi x0 , xo , 0 ? - I think Yes
+        - Wherever we are making the data as 32'h0 , we should giving a nop
+18. Write down various optimizations possible for phase 5 design. 
+    - (Extra AND gate can be removed)
+    - Retire pipleines can be combined into one pipeline 
+    - Write comments for all the logics implemented

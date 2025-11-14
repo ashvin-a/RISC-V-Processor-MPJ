@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 module hart_tb ();
     // Synchronous active-high reset.
     reg         clk, rst;
@@ -23,9 +24,9 @@ module hart_tb ();
     wire [31:0] retire_dmem_rdata;
     wire [31:0] retire_dmem_wdata;
 
-    hart #(
-        .RESET_ADDR (32'h0)
-    ) dut (
+    hart 
+        //.RESET_ADDR (32'h0)
+     dut (
         .i_clk        (clk),
         .i_rst        (rst),
         .o_imem_raddr (imem_raddr),

@@ -21,10 +21,11 @@ module imm (
     // Because the R-type format does not have an immediate, the output
     // immediate can be treated as a don't-care under this case. It is
     // included for completeness.
-    output wire [31:0] o_immediate
+    output wire [31:0] o_immediate,
+    input wire reg_valid
 );
   
-assign o_immediate =    i_format[0]? 32'bX : 
+assign o_immediate =   !reg_valid ? 32'b0 :   i_format[0]? 32'bX : 
                         i_format[1]? {{21{i_inst[31]}},i_inst[30:25],i_inst[24:21],i_inst[20]} : 
                         i_format[2]? {{21{i_inst[31]}},i_inst[30:25],i_inst[11:8],i_inst[7]} : 
                         i_format[3]? {{20{i_inst[31]}},i_inst[7],i_inst[30:25],i_inst[11:8],1'b0} :

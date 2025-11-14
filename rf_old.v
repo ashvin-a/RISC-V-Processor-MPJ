@@ -46,7 +46,8 @@ module rf #(
     // Write register enable, address [0, 31] and input data.
     input  wire        i_rd_wen,
     input  wire [ 4:0] i_rd_waddr,
-    input  wire [31:0] i_rd_wdata
+    input  wire [31:0] i_rd_wdata,
+    input  wire reg_valid
 );
     // Fill in your implementation here.
 
@@ -69,12 +70,10 @@ module rf #(
         end
     end
 
-
-
    //Bypass logic
 
-        assign o_rs1_rdata = (BYPASS_EN) ? ((i_rd_wen && (i_rs1_raddr == i_rd_waddr) && (i_rd_waddr != 5'd0) )? i_rd_wdata : mem[i_rs1_raddr]) : mem[i_rs1_raddr];
-        assign o_rs2_rdata = (BYPASS_EN) ? ((i_rd_wen && (i_rs2_raddr == i_rd_waddr) && (i_rd_waddr != 5'd0) )? i_rd_wdata : mem[i_rs2_raddr]) : mem[i_rs2_raddr];  
+        assign o_rs1_rdata = !reg_valid ? 32'b0 :  (BYPASS_EN) ? ((i_rd_wen && (i_rs1_raddr == i_rd_waddr) && (i_rd_waddr != 5'd0) )? i_rd_wdata : mem[i_rs1_raddr]) : mem[i_rs1_raddr];
+        assign o_rs2_rdata = !reg_valid ? 32'b0 :  (BYPASS_EN) ? ((i_rd_wen && (i_rs2_raddr == i_rd_waddr) && (i_rd_waddr != 5'd0) )? i_rd_wdata : mem[i_rs2_raddr]) : mem[i_rs2_raddr];  
 
 
 endmodule
