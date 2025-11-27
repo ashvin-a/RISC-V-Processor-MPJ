@@ -91,34 +91,77 @@ module cache (
     reg [1:0] valid [DEPTH - 1:0];
     reg       lru   [DEPTH - 1:0];
 
+    integer i;
+
+    always @ (posedge i_clk)
+        if (i_rst) begin
+            for (i=0; i<32; i = i + 1) begin
+                valid[i] <= 0;
+                lru[i] <= 0;
+                tags0[i] <= 0;
+                tags1[i] <= 0;
+            end
+        end
+
     // Fill in your implementation here.
 
     ////Local wires////
-    reg  cnt_4_clr = 0; // To clear the counter once 4 times count is done
-    reg  cnt_4 = 0;
-    reg  load_miss_cache_write = 0;
-    reg  store_miss_cache_write = 0;
-    reg  f_lru = 0; // Is it ok to assign them as 0 at first?
-    reg  store_hit_way0 = 0;
-    reg  store_hit_way1 = 0;
+    reg  cnt_4_clr; // To clear the counter once 4 times count is done 
+    reg  cnt_4;
+    reg  load_miss_cache_write;
+    reg  store_miss_cache_write;
+    reg  f_lru; // Is it ok to assign them as 0 at first?
+    reg  store_hit_way0;
+    reg  store_hit_way1;
     wire [31:0] t_masked_i_req_wdata;
 
-    reg    w_o_busy = 0;
-    reg  [31:0]  w_o_res_rdata = 0;
-    reg  [31:0]  w_o_mem_addr = 0;
-    reg    w_o_mem_wen = 0;
-    reg    w_o_mem_ren = 1; // Illegal to keep both as the same
-    reg  [31:0]  w_o_mem_wdata = 0;
+    reg read_hit_way0;
+    reg read_hit_way1;
+    reg miss_from_chk_tag;
+
+    reg  w_o_busy;
+    //reg  reg_o_busy;
+    reg  [31:0] w_o_res_rdata;
+    reg  [31:0] w_o_mem_addr;
+    reg  w_o_mem_wen;
+    reg  w_o_mem_ren;
+    reg  [31:0] w_o_mem_wdata;
 
     wire [4:0] set_index;
     wire [3:0] offset;
     wire [22:0] tag;
     wire cnt_4_done;
+
+    reg [1:0] counter_4;
+    reg reg_i_mem_inputs;
+    reg w_o_busy_clr;
+    reg way;
+    reg hit;
+    reg hold_lru;
+
+    wire [4:0] f_set_index;
+    wire [3:0] f_offset;
+    wire [22:0] f_tag;
+
+    reg  new_store_hit_way0;
+    reg  new_store_hit_way1;
+    
+    /////////////////////////////////////////////////////////////////////////
+    //// Registers to store the inut request signals in case of a miss///////
+    ////////////////////////////////////////////////////////////////////////
+    reg reg_i_req_ren;
+    reg reg_i_req_wen;
+    reg [31:0] reg_i_req_addr;
+    reg [31:0] reg_i_req_wdata;
+
+    reg f_i_req_wen;
+    reg f_i_req_ren;
+    reg [31:0] f_t_masked_i_req_wdata;
+    reg [31:0] f_i_req_addr;
     //###################################//#############///////
     ////DATA MASKING TO BE DONE HERE///////////////////////////
     //###################################//#############///////
-
-    // For store instructions only
+    // For store instructions only 
     assign t_masked_i_req_wdata =   (i_req_mask == 4'b0001) ? {{24{i_req_wdata[7]}},i_req_wdata[7:0]} :                   // Applicable for sb
                         (i_req_mask == 4'b0010) ? {{16{i_req_wdata[15]}},i_req_wdata[15:8],8'b0} :             // Applicable for sb
                         (i_req_mask == 4'b0100) ? {{8{i_req_wdata[23]}},i_req_wdata[23:16],16'b0} :            // Applicable for sb
@@ -140,51 +183,95 @@ module cache (
     assign o_mem_ren = w_o_mem_ren; // Illegal to keep both as the same
     assign o_mem_wdata = w_o_mem_wdata;
 
-    ////////////////////////////////////////////////////
-    //// Register to Write to Cache during Store Hit////
-    ////////////////////////////////////////////////////
-    /// no reset condition for cache write needed //////
-    ////////////////////////////////////////////////////
-    reg load_miss_cache_write_done;
-    reg store_miss_cache_write_done;
-    reg store_hit_way0_done; // to communicate to state machine that write to cache is done in this case
-    reg store_hit_way1_done; // to communicate to state machine that write to cache is done in this case
+    //////////////////////////////////////////////////////
+    ///////////////LRU //////////////////////////////////
+    ///////////////////////////////////////////////////
+    always @ (posedge i_clk)
+        if (i_rst) begin
+            for (i=0; i<32; i = i + 1) begin
+                lru[i] <= 0;
+            end
+        end
+        else begin
+            if (hit && !hold_lru) begin
+                if (way == lru[set_index])
+                    lru[set_index] = ~lru[set_index];
+                else 
+                    lru[set_index] = lru[set_index];
+            end
+            else if (!hit && !hold_lru)
+                lru[set_index] = ~lru[set_index];
+            else if (hold_lru)
+                lru[set_index] = lru[set_index];
+        end
+    
     always @ (posedge i_clk)
         if (store_hit_way0) begin// write to that particular set/way in the cache
-            store_hit_way0_done <= 1;
-            datas0[set_index][offset] <= t_masked_i_req_wdata; // TODO : To mask it in the cache module
+            datas0[set_index][offset] <= t_masked_i_req_wdata; 
         end
         else if (store_hit_way1) begin
-            store_hit_way1_done <= 1;
-            datas1[set_index][offset] <= t_masked_i_req_wdata; // TODO : To mask it in the cache module
+            datas1[set_index][offset] <= t_masked_i_req_wdata; 
         end
 
     always @ (posedge i_clk)
-        if(i_rst) begin
-            load_miss_cache_write_done  <= 0;
-            store_miss_cache_write_done <= 0;
+        if (new_store_hit_way0) begin// write to that particular set/way in the cache
+            datas0[f_set_index][f_offset] <= reg_i_req_wdata; 
         end
-        else if (load_miss_cache_write | store_miss_cache_write) begin
-            load_miss_cache_write_done  <= 1;
-            store_miss_cache_write_done <= 1;
-            if (valid[0] == 0) begin
-                lru[set_index] <= 1;
-                datas0[set_index][offset] <= i_mem_rdata; // Data coming from the Memory -> TODO : To mask it in the cache module
+        else if (new_store_hit_way1) begin
+            datas1[f_set_index][f_offset] <= reg_i_req_wdata; 
+        end
+
+    always @ (posedge i_clk)
+        if (load_miss_cache_write | store_miss_cache_write) begin
+            if (!lru[set_index]) begin
+                datas0[set_index][{(counter_4),2'b00}] <= i_mem_rdata; // Data coming from the Memory
+                if(cnt_4_done)
+                    valid[set_index][0] <= 1'b1;
+                else                     
+                    valid[set_index][0] <= valid[set_index][0];
+                tags0[set_index] <= tag;
             end
-            else if (valid[1] == 0) begin
-                lru[set_index] <= 0;
-                datas1[set_index][offset] <= i_mem_rdata; // Data coming from the Memory -> TODO : To mask it in the cache module
-            end
-            else begin// Eviction and Write overwrite
-                if(lru[set_index]) begin
-                    datas1[set_index][offset] <= i_mem_rdata; // Data coming from the Memory -> TODO : To mask it in the cache module
-                end
-                else if(!lru[set_index]) begin
-                    datas0[set_index][offset] <= i_mem_rdata; // Data coming from the Memory -> TODO : To mask it in the cache module
-                end
-                lru[set_index] <= ~lru[set_index];
+            else if (lru[set_index]) begin
+                datas1[set_index][{counter_4,2'b00}] <= i_mem_rdata; // Data coming from the Memory 
+                if(cnt_4_done)
+                    valid[set_index][1] <= 1'b1;
+                else                     
+                    valid[set_index][1] <= valid[set_index][1];
+                tags1[set_index] <= tag;
             end
         end
+
+    // always @ (posedge i_clk)
+    //     if (load_miss_cache_write | store_miss_cache_write) begin
+    //         if (valid[set_index][0] == 0 && i_mem_valid) begin
+    //             // lru[set_index] <= 1'b1;
+    //             datas0[set_index][{(counter_4),2'b00}] <= i_mem_rdata; // Data coming from the Memory
+    //             if(cnt_4_done)
+    //                 valid[set_index][0] <= 1'b1;
+    //             else                     
+    //                 valid[set_index][0] <= valid[set_index][0];
+    //             tags0[set_index] <= tag;
+    //         end
+    //         else if (valid[set_index][1] == 0 && i_mem_valid) begin
+    //             // lru[set_index] <= 1'b0;
+    //             datas1[set_index][{counter_4,2'b00}] <= i_mem_rdata; // Data coming from the Memory 
+    //             if(cnt_4_done)
+    //                 valid[set_index][1] <= 1'b1;
+    //             else                     
+    //                 valid[set_index][1] <= valid[set_index][1];
+    //             tags1[set_index] <= tag;
+    //         end
+    //         else begin// Eviction and Write overwrite - Eviction and write a full block - 4 transactions - 4 words
+    //             if(lru[set_index] && i_mem_valid) begin
+    //                 datas1[set_index][{counter_4,2'b00}] <= i_mem_rdata; // Data coming from the Memory 
+    //                 tags1[set_index] <= tag;
+    //             end
+    //             else if(!lru[set_index] && i_mem_valid) begin
+    //                 datas0[set_index][{counter_4,2'b00}] <= i_mem_rdata; // Data coming from the Memory 
+    //                 tags0[set_index] <= tag;
+    //             end
+    //         end
+    //     end
 
     //////////////////////////////////////////////////////////////////////////
     //// Register to flop Store Hit as it will be used in different states////
@@ -193,13 +280,13 @@ module cache (
     always @ (posedge i_clk)
         if(i_rst)
             f_store_hit <= 0;
-        else
+        else 
             f_store_hit <= (store_hit_way0 | store_hit_way1);
 
     //////////////////////////////////////
     //// counter to count 4 times////////
     /////////////////////////////////////
-    reg [1:0] counter_4;
+
     always @ (posedge i_clk)
         if(i_rst)
             counter_4 <= 0;
@@ -208,17 +295,45 @@ module cache (
         else if (cnt_4)
             counter_4 <= counter_4 + 2'b1;
     assign cnt_4_done = &counter_4;
-   
-    //////////////////////////////////////////////////////////////////////////
+    
+    ///////////////////////////////////////////////////////
     //// Register to flop Store lru assignment/////////////
-    //////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////
     always @ (posedge i_clk)
         lru[set_index] <= f_lru;
 
-    //////Local assignments////////////
-    assign set_index = i_req_addr[8:4];
-    assign offset = i_req_addr[3:0];
-    assign tag = i_req_addr[31:9];            
+    // /////////////////////////////////////////
+    // //// Register to flop o_busy/////////////
+    // /////////////////////////////////////////
+    // always @ (posedge i_clk)
+    //     if (w_o_busy)
+    //         reg_o_busy <= 1'b1;
+    //     else if (w_o_busy_clr)
+    //         reg_o_busy <= 1'b0;
+
+
+
+
+    always @ (posedge i_clk) // I dont want to store anything if its not a miss
+        //if (miss_from_chk_tag) begin
+        if (w_o_busy) begin
+            reg_i_req_ren   <= i_req_ren;
+            reg_i_req_wen   <= i_req_wen;
+            reg_i_req_addr  <= i_req_addr;
+            reg_i_req_wdata <= t_masked_i_req_wdata;
+        end
+
+    assign f_set_index = reg_i_req_addr[8:4];
+    assign f_offset = reg_i_req_addr[3:0];
+    assign f_tag = reg_i_req_addr[31:9];            
+
+    always @ (posedge i_clk)
+        if (store_hit_way0 | store_hit_way1) begin
+            f_i_req_wen <= i_req_wen;
+            f_i_req_ren <= i_req_ren;
+            f_t_masked_i_req_wdata <= t_masked_i_req_wdata; 
+            f_i_req_addr <= i_req_addr;
+        end
 
     localparam CHK_TAG = 2'b00;
     localparam MEM_ACCESS = 2'b01;
@@ -230,7 +345,7 @@ module cache (
     always @ (posedge i_clk)
         if(i_rst)
             state <= CHK_TAG;
-        else
+        else 
             state <= next_state;
 
     always @ (*) begin
@@ -238,123 +353,206 @@ module cache (
         w_o_res_rdata = 0;
         w_o_mem_addr = 0;
         w_o_mem_wen = 0;
-        w_o_mem_ren = 1; // Illegal to keep both as the same
+        w_o_mem_ren = 0; // Illegal to keep both as the same TODO
         w_o_mem_wdata = 0;
-        cnt_4_clr = 0; // To clear the counter once 4 times count is done
+        cnt_4_clr = 0; // To clear the counter once 4 times count is done 
         cnt_4 = 0;
         load_miss_cache_write = 0;
         store_miss_cache_write = 0;
         f_lru = 0; // Is it ok to assign them as 0 at first?
         store_hit_way0 = 0;
         store_hit_way1 = 0;
-        next_state = state;
+        hit = 0;
+        way = 0;
+        hold_lru = 0;
 
-        case (state)
-            CHK_TAG: begin
-                    if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_ren) begin// LOAD HIT - Way 0
-                        w_o_res_rdata = datas0[set_index][offset];
-                        f_lru = 1; // Flopping it so that it is not lost once lru gets updated
-                    end
-                    else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_ren) begin// LOAD HIT - Way 1
-                        w_o_res_rdata = datas1[set_index][offset];
-                        f_lru = 0; // Flopping it so that it is not lost once lru gets updated
-                    end
-                    else if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_wen) begin // STORE HIT - Way 0  - Write to this Cache
-                        store_hit_way0 = 1;
-                        next_state = MEM_ACCESS;
-                        f_lru = 1; // Flopping it so that it is not lost once lru gets updated
-                    end
-                    else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_wen) begin // STORE HIT - Way 1 - Write to this Cache
-                        store_hit_way1 = 1;
-                        next_state = MEM_ACCESS;
-                        f_lru = 0; // Flopping it so that it is not lost once lru gets updated
-                    end
-                    else begin                               // GOING TO READ THE BLOCK FROM MEMORY IN CASE OF BOTH THE MISSES
-                        next_state = MEM_ACCESS;
-                        w_o_busy = 1; // Will make busy whenever we have a MISS and we are trying to acess the memory
-                    end
-            end
-            MEM_ACCESS: begin
-                if (i_mem_ready) begin // Check for whether the Memory is ready or not
-                    if (f_store_hit) begin // STORE HIT - Write through  to MEM (checking the flopped store hit value)
-                        w_o_mem_wen = 1;
-                        w_o_mem_ren = 0;
-                        w_o_mem_wdata = t_masked_i_req_wdata;  // TODO : Do I need to flop it before i give it?? -  - I dont think so
-                        w_o_mem_addr = i_req_addr; // TODO : Do I need to flop it before i give it?? - I dont think so - DO I NEED TO MAKE THE LAST 2 BITS TO 0?
-                        next_state = CHK_TAG; // Have to go back to Check Tag once Write through to Memory is completed
-                    end
-                    else if (i_req_ren && !i_req_wen) begin  // LOAD MISS - Checking for the read enable high case
-                        w_o_mem_wen = 0;
-                        w_o_mem_ren = 1;
-                        w_o_mem_addr = {i_req_addr[31:2],counter_4}; // TODO : BASE ADDRESS OF THE BLOCK ADDRESS IS REQUIRED FIRST AND THEN INCREMENT USING THE COUNT - Do I need to flop it before i give it?? - I dont think so                      
-                        next_state = WRITE_CACHE; // We need to write the read value into the cache - But we need to do it on a counter 4 basis to read 4 words one by one
-                        w_o_busy = 1; // TODO : Is it Redundant??
-                    end
-                    else if (!i_req_ren && i_req_wen) begin // STORE MISS - Read block from MEM - Write to Cache and Update Cache and Write through  to MEM
-                        //READ a BLOCK FROM THE MEMORY - 4 consecutive read requests
-                        w_o_mem_wen = 0;
-                        w_o_mem_ren = 1;
-                        w_o_mem_addr = {i_req_addr[31:2],counter_4}; // TODO : BASE ADDRESS OF THE BLOCK ADDRESS IS REQUIRED FIRST AND THEN INCREMENT USING THE COUNT - Do I need to flop it before i give it?? - I dont think so
-                        next_state = WRITE_CACHE; // We need to write the read value into the cache - But we need to do it on a counter 4 basis to read 4 words one by one
-                        w_o_busy = 1; // TODO : Is it Redundant??
-                    end
-                end
-            end
-            WRITE_CACHE : begin
-                if (i_mem_valid && i_req_ren) begin// LOAD MISS - Waiting for valid will ensure that we wait for how much ever time the memory takes to give back the valid data - But how will we increment the cou
-                    load_miss_cache_write = 1; // Write the data coming from the Memory to the cache
-                    // We will wait until cache write is done before next request - to ensure that we get the incremented counter value in the next MEM_ACCESS state above
-                    if (cnt_4_done == 1'b0) begin
-                        if (load_miss_cache_write_done) begin
-                            cnt_4 = 1; // Increment the counter only when Write cache is done so that
-                            next_state = MEM_ACCESS;
+        read_hit_way0 = 0;
+        read_hit_way1 = 0;
+        miss_from_chk_tag = 0;
+
+        new_store_hit_way0 = 0;
+        new_store_hit_way1 = 0;
+
+        next_state = state;
+        if (!i_rst) begin  // To avoid reset condition - BIG TODOOOOOOOOOOOOOOOO !!!!
+        //if (reg_valid) begin  // To avoid reset condition - BIG TODOOOOOOOOOOOOOOOO !!!!
+            case (state)
+                CHK_TAG: begin
+                        if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_ren) begin// LOAD HIT - Way 0
+                            w_o_res_rdata = datas0[set_index][offset];
+                            f_lru = 1; // Flopping it so that it is not lost once lru gets updated
+                            way = 0; 
+                            hit = 1;
+                            hold_lru = 0;
+                            read_hit_way0 = 1;
                         end
-                        else
-                            next_state = WRITE_CACHE; // Stay in this state until we have the writeto cache done in case of load miss                            
-                    end
-                    else if (cnt_4_done == 1'b1) begin
-                        if (load_miss_cache_write_done) begin                        
-                            cnt_4_clr = 1;
-                            next_state = CHK_TAG; // This will ensure o_busy also will default to 0
-                        end    
-                        else
-                            next_state = WRITE_CACHE; // Stay in this state until we have the writeto cache done in case of load miss                                          
-                    end
-                   
-                end
-                else if (i_mem_valid && i_req_wen) begin// STORE MISS
-                    store_miss_cache_write = 1; // Write the block of data coming from the Memory to the cache first and then update that address location in the cache
-                    if (cnt_4_done == 1'b0) begin
-                        if(store_miss_cache_write_done) begin
-                            cnt_4 = 1; // Increment the counter only when Write cache is done so that it gets captured by the MEM_ACCESS state when it sents the new read address to the MEM
-                            next_state = MEM_ACCESS;
+                        else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_ren) begin// LOAD HIT - Way 1
+                            w_o_res_rdata = datas1[set_index][offset];
+                            f_lru = 0; // Flopping it so that it is not lost once lru gets updated
+                            way = 1;
+                            hit = 1;
+                            hold_lru = 0;
+                            read_hit_way1 = 1;
                         end
-                        else
-                            next_state = WRITE_CACHE;
-                    end
-                    else begin
-                        cnt_4_clr = 1;
-                        w_o_busy = 0; // We will explicitly make o_busy low because we know that now the particular address is part of the cache and it will be a Hit if checked again
-                        if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_wen) begin //  Way 0  - Write to this Cache - // We expect the i_req_addr input to give us the location of the cache to which we should write.
-                            store_hit_way0 = 1;
-                            if(store_hit_way0_done) // TODO : Should we wait for the Cache write to be completed before writing it through to the Memory?
-                                next_state = MEM_ACCESS; // Then go to MEM ACCESS for writing it through to memory
+                        else if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_wen) begin // STORE HIT - Way 0  - Write to this Cache
+                            way = 0;
+                            hit = 1;
+                            store_hit_way0 = 1; // To ensure write to cache is done even it is a hit which will be followed by write through to mem
+                            f_lru = 1; // Flopping it so that it is not lost once lru gets updated
+                            if (i_mem_ready) begin // WRITE THROUGH :  Check for whether the Memory is ready or not
+                                hold_lru = 0;
+                                w_o_mem_wen   = i_req_wen;
+                                w_o_mem_ren   = i_req_ren;
+                                w_o_mem_wdata = t_masked_i_req_wdata;  
+                                w_o_mem_addr  = i_req_addr;
+                            end
+                            else begin
+                                hold_lru = 1;
+                                next_state = MEM_ACCESS;
+                                w_o_busy = 1;                            
+                            end
                         end
-                        else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_wen) begin //  Way 1 - Write to this Cache
+                        else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_wen) begin // STORE HIT - Way 1 - Write to this Cache
+                            way = 1;
+                            hit = 1;
                             store_hit_way1 = 1;
-                            if(store_hit_way1_done) // TODO : Should we wait for the Cache write to be completed before writing it through to the Memory?
-                                next_state = MEM_ACCESS; // Then go to MEM ACCESS for writing it through to memory
+                            f_lru = 0; // Flopping it so that it is not lost once lru gets updated
+                            if (i_mem_ready) begin // WRITE THROUGH :  Check for whether the Memory is ready or not
+                                hold_lru = 0;
+                                w_o_mem_wen   = i_req_wen;
+                                w_o_mem_ren   = i_req_ren;
+                                w_o_mem_wdata = t_masked_i_req_wdata;  
+                                w_o_mem_addr  = i_req_addr;
+                            end  
+                            else begin
+                                hold_lru = 1;
+                                next_state = MEM_ACCESS;                            
+                                w_o_busy = 1;                            
+                            end                                                      
                         end
-                    end
+                        else begin  // GOING TO READ THE BLOCK FROM MEMORY IN CASE OF BOTH THE MISSES
+                            next_state = MEM_ACCESS;
+                            miss_from_chk_tag = 1;
+                            w_o_busy = 1;
+                            hold_lru = 1;
+                        end
                 end
-            end
-            default : begin
-                next_state = CHK_TAG;
-            end
-        endcase
+                MEM_ACCESS: begin
+                        hold_lru = 1;
+                        if (f_store_hit) begin // STORE HIT - Write through  to MEM (checking the flopped store hit value)
+                            if (i_mem_ready) begin // WRITE THROUGH :  Check for whether the Memory is ready or not
+                                w_o_mem_wen   = f_i_req_wen;
+                                w_o_mem_ren   = f_i_req_ren;
+                                w_o_mem_wdata = f_t_masked_i_req_wdata;  
+                                w_o_mem_addr  = f_i_req_addr;
+                                next_state = CHK_TAG; // Have to go back to Check Tag once Write through to Memory is completed
+                            end 
+                        end
+                        else if (reg_i_req_ren && !reg_i_req_wen) begin  // LOAD MISS - Checking for the read enable high case
+                            w_o_busy = 1;
+                            if (i_mem_ready) begin // Check for whether the Memory is ready or not
+                                    w_o_mem_wen = !reg_i_req_wen;
+                                    w_o_mem_ren = reg_i_req_ren;
+                                    w_o_mem_addr = {reg_i_req_addr[31:4],counter_4,2'b00};                      
+                                    next_state = WRITE_CACHE; // We need to write the read value into the cache - But we need to do it on a counter 4 basis to read 4 words one by one
+                                    w_o_busy = 1;
+                            end
+                        end
+                        else if (!reg_i_req_ren && reg_i_req_wen) begin // STORE MISS - Read block from MEM - Write to Cache and Update Cache and Write through  to MEM
+                            w_o_busy = 1;
+                            if (i_mem_ready) begin // Check for whether the Memory is ready or not
+                                    w_o_mem_wen = 0;
+                                    w_o_mem_ren = 1;
+                                    w_o_mem_addr = {reg_i_req_addr[31:0],counter_4,2'b00}; // TODO : BASE ADDRESS OF THE BLOCK ADDRESS IS REQUIRED FIRST AND THEN INCREMENT USING THE COUNT - Do I need to flop it before i give it?? - I dont think so
+                                    next_state = WRITE_CACHE; // We need to write the read value into the cache - But we need to do it on a counter 4 basis to read 4 words one by one
+                                    w_o_busy = 1;
+                            end
+                        end
+                end
+                WRITE_CACHE : begin
+                    w_o_busy = 1;
+                    // if (reg_i_req_ren) begin
+                        if (i_mem_valid && reg_i_req_ren) begin// LOAD MISS - Waiting for valid will ensure that we wait for how much ever time the memory takes to give back the valid data
+                            load_miss_cache_write = 1; // Write the data coming from the Memory to the cache
+                            if (cnt_4_done == 1'b0) begin
+                                cnt_4 = 1; // Increment the counter only when Write cache is done 
+                                next_state = MEM_ACCESS;
+                                hold_lru = 1;
+                            end
+                            else if (cnt_4_done == 1'b1) begin
+                                cnt_4_clr = 1;
+                                next_state = CHK_TAG;
+                                hold_lru = 0;
+                            end    
+                        end
+                    //end
+
+                    if (i_mem_valid && reg_i_req_wen) begin// STORE MISS - Waiting for valid will ensure that we wait for how much ever time the memory takes to give back the valid data
+                        store_miss_cache_write = 1; // Write the data coming from the Memory to the cache
+                        if (cnt_4_done == 1'b0) begin
+                            cnt_4 = 1; // Increment the counter only when Write cache is done 
+                            next_state = MEM_ACCESS;
+                            hold_lru = 1;
+                        end
+                        else if (cnt_4_done == 1'b1) begin
+                            cnt_4_clr = 1;
+                            
+                            // Do the writing to cache  ///  && (tags0[set_index] == tag)
+                            if (valid[f_set_index][lru[f_set_index]]) begin
+                                if(!lru[f_set_index]) begin //  Way 0 
+                                    if (tags0[f_set_index] == f_tag) begin
+                                        new_store_hit_way0 = 1;
+                                    end
+                                else begin
+                                    if (tags1[f_set_index] == f_tag) begin
+                                        new_store_hit_way1 = 1;
+                                        end
+                                    end
+                                end
+                            end
+                            // Send the write through stuff to memory
+                            if (i_mem_ready) begin // WRITE THROUGH :  Check for whether the Memory is ready or not
+                                hold_lru = 0;
+                                w_o_mem_wen   = reg_i_req_wen;
+                                w_o_mem_ren   = reg_i_req_ren;
+                                w_o_mem_wdata = reg_i_req_wdata;  
+                                w_o_mem_addr  = reg_i_req_addr;
+                                next_state = CHK_TAG;
+                            end
+
+                        end    
+                    end
+                    // else if (i_mem_valid && reg_i_req_wen) begin// STORE MISS
+                    //     store_miss_cache_write = 1; // Write the block of data coming from the Memory to the cache first and then update that address location in the cache
+                    //     if (cnt_4_done == 1'b0) begin
+                    //         if(store_miss_cache_write_done) begin
+                    //             cnt_4 = 1; // Increment the counter only when Write cache is done so that it gets captured by the MEM_ACCESS state when it sents the new read address to the MEM
+                    //             next_state = MEM_ACCESS;
+                    //         end
+                    //         else 
+                    //             next_state = WRITE_CACHE;
+                    //     end
+                    //     else if (cnt_4_done == 1'b1) begin
+                    //         cnt_4_clr = 1;
+                    //         w_o_busy_clr = 1; // We will explicitly make o_busy low because we know that now the particular address is part of the cache and it will be a Hit if checked again
+                    //         if(valid[set_index][0] && (tags0[set_index] == tag) && i_req_wen) begin //  Way 0  - Write to this Cache - // We expect the i_req_addr input to give us the location of the cache to which we should write.
+                    //             store_hit_way0 = 1;
+                    //             next_state = MEM_ACCESS; // Then go to MEM ACCESS for writing it through to memory
+                    //         end
+                    //         else if (valid[set_index][1] && (tags1[set_index] == tag) && reg_i_req_wen) begin //  Way 1 - Write to this Cache
+                    //             store_hit_way1 = 1;
+                    //             next_state = MEM_ACCESS; // Then go to MEM ACCESS for writing it through to memory
+                    //         end
+                    //     end
+                    // end
+                end
+                default : begin
+                    next_state = CHK_TAG;
+                end
+            endcase
+        end
     end
 endmodule
-
 // Do we need to mask for the out data in case of load?
 // Make sure o_busy assignments through states are correct
 // Do i need to make cnt_4_clr = 1 as default?
@@ -363,5 +561,4 @@ endmodule
 // Does the read happen combinationally from the Memory?
 // Do we need to make o_busy high whenever even during the STORE HIT MEM ACCESS CASE
 // Read the descirption to see they are asking us to mask the last 2 bits to 0 of addresses all the time - whether we are doing it or not
-
 `default_nettype wire
