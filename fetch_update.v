@@ -3,20 +3,31 @@
 module fetch (
     input  wire clk,
     input  wire rst,
-    input  wire i_clu_halt,                         // When high the program has completed excecution and the PC stops updating
-    input  wire i_alu_o_Zero_clu_Branch_and,            // NEW ANDed SIGNAL from MEM Stage of the pipeline
+    input  wire i_clu_halt,
     input  wire i_pc_write_en,
-    input  wire [31:0] i_pc_o_rs1_data_mux_imm_add_data,  // Take o_rs1 for JALR instruction and PC for others
-    output wire [31:0] o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
+    
+    // Branch correction signals
+    input  wire i_mispredict,                // NEW: From HCU
+    input  wire [31:0] i_recovery_addr,      // NEW: Correct address to jump to
+
+    // Normal PC inputs
+    output wire [31:0] o_instr_mem_rd_addr,
     output wire [31:0] o_pc_plus_4,
-    output reg  [31:0] PC,                           // Program Counter register
-    output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
+    output reg  [31:0] PC,
+    output wire [31:0] o_next_pc    
 );
-    wire [31:0]next_pc;
-    wire [31:0]t_pc_plus_4;
+
+    wire [31:0] next_pc;
+    wire [31:0] t_pc_plus_4;
+    
     assign t_pc_plus_4 = PC + 4;
-    assign next_pc = (i_alu_o_Zero_clu_Branch_and) ? i_pc_o_rs1_data_mux_imm_add_data :t_pc_plus_4;
-    assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4 ;
+
+    // Logic for Next PC:
+    // 1. High Priority: If mispredict, go to recovery address immediately.
+    // 2. Normal: PC + 4 (Since we don't have a BTB to jump in Fetch, we fetch normally).
+    assign next_pc = (i_mispredict) ? i_recovery_addr : t_pc_plus_4;
+
+    assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4;
     assign o_pc_plus_4 = t_pc_plus_4;
 
     always @(posedge clk) begin
