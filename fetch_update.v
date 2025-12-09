@@ -506,12 +506,13 @@ wire IF_ID_flush;
 wire [63:0]IF_ID_temp;
 wire t_predict_taken;      // Output from BHT
 wire t_mispredict;         // Output from HCU
+wire [197:0]ID_EX_temp;
 
 // Logic to calculate Recovery Address in EX stage
 // If Predict=Taken (1) but Actual=NotTaken (0) -> We should have gone to PC+4 (of that branch)
 // If Predict=NotTaken (0) but Actual=Taken (1) -> We should have gone to Target (PC+Imm)
 wire [31:0] t_recovery_pc;
-assign t_recovery_pc = (ID_EX[197]) ? ID_EX[175:144] : t_pc_o_rs1_data_mux_imm_add_EX_stage_data;
+assign t_recovery_pc = (ID_EX_temp[197]) ? ID_EX_temp[175:144] : t_pc_o_rs1_data_mux_imm_add_EX_stage_data;
 // ID_EX[197] is the propogated prediction bit
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -531,15 +532,14 @@ fetch fetch_inst(
     .o_next_pc(t_o_next_pc)
 );
 
-wire t_predict_taken;
 
 branch_predictor bht_inst (
     .clk(i_clk),
     .rst(i_rst),
     .i_fetch_pc(PC_current_val),
-    .i_ex_pc(ID_EX[143:112]),              // PC stored in ID_EX pipeline
+    .i_ex_pc(ID_EX_temp[143:112]),              // PC stored in ID_EX pipeline
     .i_ex_branch_was_taken(t_alu_o_Zero_clu_Branch_and), // Actual outcome in EX
-    .i_ex_is_branch_instr(ID_EX[184]),     // t_clu_branch signal in ID_EX
+    .i_ex_is_branch_instr(ID_EX_temp[184]),     // t_clu_branch signal in ID_EX
     .o_predict_taken(t_predict_taken)
 );
 //////////////////////////////////////////////////////////////
@@ -665,7 +665,6 @@ assign Control_input_ID_EX = {t_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 reg [197:0]ID_EX;
 wire ID_EX_flush;
-wire [197:0]ID_EX_temp;
 assign ID_EX_temp = {IF_ID[64], Control_input_ID_EX[20:0],IF_ID[63:32],IF_ID[31:0],o_rs1_rdata[31:0],t_rs2_rdata[31:0],t_i_imem_to_rf_instr[31:25],t_i_imem_to_rf_instr[14:12],t_i_imem_to_rf_instr[5],t_immediate_out_data[31:0],t_i_imem_to_rf_instr[11:7]};//Instruction from IMEM is directly connected to next pipeline
 always @ (posedge i_clk) begin
     if (i_rst)
