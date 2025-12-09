@@ -504,6 +504,16 @@ wire t_id_ex_alu_o_Zero_clu_Branch_and;
 wire IF_ID_write_en;
 wire IF_ID_flush;
 wire [63:0]IF_ID_temp;
+wire t_predict_taken;      // Output from BHT
+wire t_mispredict;         // Output from HCU
+
+// Logic to calculate Recovery Address in EX stage
+// If Predict=Taken (1) but Actual=NotTaken (0) -> We should have gone to PC+4 (of that branch)
+// If Predict=NotTaken (0) but Actual=Taken (1) -> We should have gone to Target (PC+Imm)
+wire [31:0] t_recovery_pc;
+assign t_recovery_pc = (ID_EX[197]) ? ID_EX[175:144] : t_pc_o_rs1_data_mux_imm_add_EX_stage_data;
+// ID_EX[197] is the propogated prediction bit
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////MODULE INSTANTIATIONS AND PIPLEINE DEFINITIONS START HERE//////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -512,9 +522,9 @@ fetch fetch_inst(
     .clk(i_clk),
     .rst(i_rst),
     .i_clu_halt(t_clu_halt), // Halt is received immediately from the control unit (No flop)
-    .i_alu_o_Zero_clu_Branch_and(t_id_ex_alu_o_Zero_clu_Branch_and), //  MEM_EX Reg ANDED output given to the Fetch -> Updating it the Non Flopped And Value from EX Stage
     .i_pc_write_en(t_pc_write_en),
-    .i_pc_o_rs1_data_mux_imm_add_data(t_pc_o_rs1_data_mux_imm_add_data), //T Connected it to EX/MEM Pipeline register out of the muxed and added data
+    .i_mispredict(t_mispredict),          // From Hazard Unit
+    .i_recovery_addr(t_recovery_pc),      // Calculated recovery logic
     .PC(PC_current_val),
     .o_pc_plus_4(t_pc_plus_4),
     .o_instr_mem_rd_addr(o_imem_raddr),
@@ -546,17 +556,17 @@ end
 assign reg_valid = f_valid & !IF_ID_flush;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////*IF_ID Pipeline Register Implementation*/////////////////////////////////////////////////////////////////////
-/////////////////////////////////////{t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
-/////////////////////////////////    {IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
+/////////////////////////////////////{t_predict_taken, t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
+/////////////////////////////////    {IF_ID[64]      ,  IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //TODO : Enable Clear and ready
-reg [63:0]IF_ID;
-assign IF_ID_temp = {t_pc_plus_4[31:0],PC_current_val[31:0]};
+reg [64:0]IF_ID;
+assign IF_ID_temp = {t_predict_taken, t_pc_plus_4[31:0],PC_current_val[31:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
-            IF_ID <= 64'b0;
+            IF_ID <= 65'b0;
     else if (IF_ID_flush)
-            IF_ID <= 64'b0;
+            IF_ID <= 65'b0;
     else if (IF_ID_write_en)
             IF_ID <= IF_ID_temp;
 end
@@ -643,25 +653,25 @@ end
 ////////////////#######################################*ID_EX Pipeline Register Implementation*#######################################//////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 20 bit Wire to group all the Control Signal together for pipelining///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//{ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
-//{t_clu_halt         ,  t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
+//{ID_EX[197]         ,ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
+//{predictor_bit         ,  t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 wire [20:0] Control_input_ID_EX;
 assign Control_input_ID_EX = {t_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
                              t_clu_branch,t_clu_branch_instr_alu_sel[1:0],t_clu_alu_op[1:0],t_clu_ALUSrc[1:0],t_clu_lui_auipc_mux_sel[1:0]};
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////{ID_EX[196:176],        ID_EX[175:144],        ID_EX[143:112],             ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
-///      {Control Signals[20:0], t_pc_plus_4,           PC_current_val,             o_rs1_rdata[31:0],  t_rs2_rdata[31:0], func7,        func3,        opcode5thbit, t_immediate_out_data,  wr_addr[4:0]}//////////////////////////
+/////////{ID_EX[197]     ,ID_EX[196:176],        ID_EX[175:144],        ID_EX[143:112],             ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
+///      {t_predict_taken,Control Signals[20:0], t_pc_plus_4,           PC_current_val,             o_rs1_rdata[31:0],  t_rs2_rdata[31:0], func7,        func3,        opcode5thbit, t_immediate_out_data,  wr_addr[4:0]}//////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-reg [196:0]ID_EX;
+reg [197:0]ID_EX;
 wire ID_EX_flush;
-wire [196:0]ID_EX_temp;
-assign ID_EX_temp = {Control_input_ID_EX[20:0],IF_ID[63:32],IF_ID[31:0],o_rs1_rdata[31:0],t_rs2_rdata[31:0],t_i_imem_to_rf_instr[31:25],t_i_imem_to_rf_instr[14:12],t_i_imem_to_rf_instr[5],t_immediate_out_data[31:0],t_i_imem_to_rf_instr[11:7]};//Instruction from IMEM is directly connected to next pipeline
+wire [197:0]ID_EX_temp;
+assign ID_EX_temp = {IF_ID[64], Control_input_ID_EX[20:0],IF_ID[63:32],IF_ID[31:0],o_rs1_rdata[31:0],t_rs2_rdata[31:0],t_i_imem_to_rf_instr[31:25],t_i_imem_to_rf_instr[14:12],t_i_imem_to_rf_instr[5],t_immediate_out_data[31:0],t_i_imem_to_rf_instr[11:7]};//Instruction from IMEM is directly connected to next pipeline
 always @ (posedge i_clk) begin
     if (i_rst)
-        ID_EX <= 197'b0;
+        ID_EX <= 198'b0;
     else if (ID_EX_flush)
-        ID_EX <= 197'b0;
+        ID_EX <= 198'b0;
     else
         ID_EX <= ID_EX_temp;
     end
