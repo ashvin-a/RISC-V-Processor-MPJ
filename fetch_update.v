@@ -882,6 +882,10 @@ hazard_control_unit hazard_control_unit_inst (
     .i_hcu_IF_ID_rs1(t_i_imem_to_rf_instr[19:15]), //Unflopped rs1_addr -  ID_EX_FWD_ADDR_PIPE[4:0]
     .i_hcu_IF_ID_rs2(t_i_imem_to_rf_instr[24:20]), //Unflopped rs2_addr -  ID_EX_FWD_ADDR_PIPE[9:5]
     .i_hcu_IF_ID_MemWrite(t_dmem_wen), // Should we change to the ID_EX signal? - Can be removed
+    .i_ex_prediction_bit(ID_EX[197]),           // The pipelined prediction bit
+    .i_ex_actual_outcome(t_id_ex_alu_o_Zero_clu_Branch_and), // Actual result
+    .i_ex_is_branch(ID_EX[184]),                // Is it a branch instr?
+    .o_ex_mispredict_detected(t_mispredict),    // Connect to wire t_mispredict
     .o_hcu_IF_ID_flush(IF_ID_flush), 
     .o_hcu_ID_EX_flush(ID_EX_flush),
     .o_hcu_PCWriteEn(t_pc_write_en),
