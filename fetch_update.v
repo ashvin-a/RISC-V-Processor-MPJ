@@ -509,6 +509,18 @@ fetch fetch_inst(
     .o_instr_mem_rd_addr(o_imem_raddr),
     .o_next_pc(t_o_next_pc)
 );
+
+wire t_predict_taken;
+
+branch_predictor bht_inst (
+    .clk(i_clk),
+    .rst(i_rst),
+    .i_fetch_pc(PC_current_val),
+    .i_ex_pc(ID_EX[143:112]),              // PC stored in ID_EX pipeline
+    .i_ex_branch_was_taken(t_alu_o_Zero_clu_Branch_and), // Actual outcome in EX
+    .i_ex_is_branch_instr(ID_EX[184]),     // t_clu_branch signal in ID_EX
+    .o_predict_taken(t_predict_taken)
+);
 //////////////////////////////////////////////////////////////
 //Introducing Valid signal for Invalidating instructions//////
 //////////////////////////////////////////////////////////////
