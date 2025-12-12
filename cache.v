@@ -91,13 +91,11 @@ module cache (
     reg [1:0] valid [DEPTH - 1:0];
     reg       lru   [DEPTH - 1:0];
 
-    ////////////////////////////////////////
-    ////////Resetting Cache arrays//////////
-    ////////////////////////////////////////
-    integer i,j,k;
+    integer i;
+
     always @ (posedge i_clk)
         if (i_rst) begin
-            for (i=0; i< DEPTH; i = i + 1) begin
+            for (i=0; i<32; i = i + 1) begin
                 valid[i] <= 0;
                 lru[i] <= 0;
                 tags0[i] <= 0;
@@ -125,15 +123,19 @@ module cache (
     reg  store_hit_way0;
     reg  store_hit_way1;
     wire [31:0] t_masked_i_req_wdata;
+
     reg read_hit_way0;
     reg read_hit_way1;
     reg miss_from_chk_tag;
+
     reg  w_o_busy;
+    reg reg_o_busy;
     reg  [31:0] w_o_res_rdata;
     reg  [31:0] w_o_mem_addr;
     reg  w_o_mem_wen;
     reg  w_o_mem_ren;
     reg  [31:0] w_o_mem_wdata;
+
     wire [4:0] set_index;
     wire [1:0] offset;
     wire [22:0] tag;
@@ -145,13 +147,16 @@ module cache (
     reg way;
     reg hit;
     reg hold_lru;
+
     wire [4:0] f_set_index;
     wire [1:0] f_offset;
     wire [22:0] f_tag;
     reg  do_the_write_cache;
+    
     reg mem_access_store_hit;
     reg mem_access_store_miss;
     reg mem_access_load_miss;
+
     reg load_miss_cache_write_done;
     reg load_miss_cache_write_done_clr;
     /////////////////////////////////////////////////////////////////////////
@@ -205,11 +210,12 @@ module cache (
     assign o_res_rdata = w_o_res_rdata; // Should I send the o_res_rdata masked out from the cache? Or Hart will take care of the cache?
     assign o_mem_addr = w_o_mem_addr;
     assign o_mem_wen = w_o_mem_wen;
-    assign o_mem_ren = w_o_mem_ren;
+    assign o_mem_ren = w_o_mem_ren; // Illegal to keep both as the same
     assign o_mem_wdata = w_o_mem_wdata;
-    ////////////////////////////////////////////////////////
-    ///////////////LRU Update///////////////////////////////
-    ////////////////////////////////////////////////////////
+
+    //////////////////////////////////////////////////////
+    ///////////////LRU //////////////////////////////////
+    ///////////////////////////////////////////////////
     always @ (posedge i_clk)
         if (i_rst) begin
             for (i=0; i<32; i = i + 1) begin
@@ -220,14 +226,19 @@ module cache (
             if (hit && !hold_lru) begin
                 if (way == lru[set_index])
                     lru[set_index] <= ~lru[set_index];
+                    //lru[set_index] = ~lru[set_index];
                 else 
+                    //lru[set_index] = lru[set_index];
                     lru[set_index] <= lru[set_index];
             end
             else if (!hit && !hold_lru)
+                //lru[set_index] = ~lru[set_index];
                 lru[set_index] <= ~lru[set_index];
             else if (hold_lru)
+                //lru[set_index] = lru[set_index];
                 lru[set_index] <= lru[set_index];
         end
+
     ///////////////////////////////////////////////////
     ////////////////////cache write////////////////////
     ///////////////////////////////////////////////////
@@ -268,6 +279,7 @@ module cache (
                 datas0[set_index][offset] <= {i_req_wdata[7:0],datas0[set_index][offset][23:0]};                                                 
         end
         else if (store_hit_way1) begin
+            // datas1[set_index][offset] <= t_masked_i_req_wdata;
             if(i_req_mask == 4'b1111)
                 datas1[set_index][offset] <= i_req_wdata;
             else if(i_req_mask == 4'b0011)
@@ -284,6 +296,7 @@ module cache (
                 datas1[set_index][offset] <= {i_req_wdata[7:0],datas1[set_index][offset][23:0]};               
         end
         else if (do_the_write_cache && store_miss_cache_write) begin// write to that particular set/way in the cache
+            // datas0[f_set_index][f_offset] <= reg_i_req_wdata; 
             if (!lru[f_set_index]) begin
                 if(reg_i_req_mask == 4'b1111)
                     datas0[f_set_index][f_offset] <= reg_i_req_wdata;
@@ -358,9 +371,18 @@ module cache (
                 // end
             end
         end
-    //////////////////////////////////////////////////////////////////////////////
-    //// counter to count 4 times whenever we read a block from the memory////////
-    //////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////
+    //// Register to flop Store Hit as it will be used in different states////
+    //////////////////////////////////////////////////////////////////////////
+    reg f_store_hit;
+    always @ (posedge i_clk)
+        if(i_rst)
+            f_store_hit <= 0;
+        else 
+            f_store_hit <= (store_hit_way0 | store_hit_way1);
+    //////////////////////////////////////
+    //// counter to count 4 times////////
+    /////////////////////////////////////
     always @ (posedge i_clk)
         if(i_rst)
             counter_4 <= 0;
@@ -397,18 +419,35 @@ module cache (
             reg_i_req_wdata <= i_req_wdata; 
             reg_i_req_mask  <= i_req_mask;
         end
+
     assign f_set_index = reg_i_req_addr[8:4];
     assign f_offset = reg_i_req_addr[3:2];
     assign f_tag = reg_i_req_addr[31:9];            
-    /////////////////////////////////////////////////////
-    ///////////c.t.s assignment of o_res_rdata///////////
-    /////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////
+    ////whenever there is a store hit storing the instruction info in a register////////
+    ///////////////////////////////////////////////////////////////////////////////////
+    always @ (posedge i_clk)
+        if (i_rst) begin
+            f_i_req_ren   <= 0;
+            f_i_req_wen   <= 0;
+            f_i_req_addr  <= 0;
+            f_t_masked_i_req_wdata <= 0;
+        end    
+        else if (store_hit_way0 | store_hit_way1) begin
+            f_i_req_wen <= i_req_wen;
+            f_i_req_ren <= i_req_ren;
+            f_t_masked_i_req_wdata <= t_masked_i_req_wdata; 
+            f_i_req_addr <= i_req_addr;
+        end
+
     always @(*) begin
+
         // normal cache read
         if (valid[set_index][0] && (tags0[set_index] == tag) && i_req_ren && !i_req_wen)
             w_o_res_rdata = datas0[set_index][offset];
         else if (valid[set_index][1] && (tags1[set_index] == tag) && i_req_ren && !i_req_wen)
             w_o_res_rdata = datas1[set_index][offset];
+
         // miss-writeback read override
         if (!o_busy && load_miss_cache_write_done) begin
             if (valid[f_set_index][0] && (tags0[f_set_index] == f_tag) && reg_i_req_ren && !reg_i_req_wen)
@@ -417,6 +456,7 @@ module cache (
                 w_o_res_rdata = datas1[f_set_index][f_offset];
         end
     end
+
     /////////////////////////////////////
     ///////State Machine////////////////
     /////////////////////////////////////
@@ -424,6 +464,7 @@ module cache (
     localparam MEM_ACCESS = 2'b01;
     localparam WRITE_CACHE = 2'b10;
     reg [1:0] state,next_state;
+
     always @ (posedge i_clk)
         if(i_rst) 
             state <= CHK_TAG;
@@ -434,6 +475,7 @@ module cache (
         mem_access_store_hit = 0;
         mem_access_store_miss = 0;
         mem_access_load_miss = 0;
+
         w_o_busy = 0;
         w_o_mem_addr = 0;
         w_o_mem_wen = 0;
@@ -444,11 +486,13 @@ module cache (
         load_miss_cache_write = 0;
         store_miss_cache_write = 0;
         load_miss_cache_write_done_clr = 0;
+
         store_hit_way0 = 0;
         store_hit_way1 = 0;
         hit = 0;
         way = 0;
         hold_lru = 0;
+
         read_hit_way0 = 0;
         read_hit_way1 = 0;
         miss_from_chk_tag = 0;
