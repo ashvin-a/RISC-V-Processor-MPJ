@@ -71,11 +71,22 @@ module cache (
     wire [31:0] hit_word = (hit_way == 0) ? rdata0 : rdata1;
     reg  [31:0] hit_merged_wdata;
 
+    // always @(*) begin
+    //     hit_merged_wdata[ 7: 0] = i_req_mask[0] ? i_req_wdata[ 7: 0] : hit_word[ 7: 0];
+    //     hit_merged_wdata[15: 8] = i_req_mask[1] ? i_req_wdata[15: 8] : hit_word[15: 8];
+    //     hit_merged_wdata[23:16] = i_req_mask[2] ? i_req_wdata[23:16] : hit_word[23:16];
+    //     hit_merged_wdata[31:24] = i_req_mask[3] ? i_req_wdata[31:24] : hit_word[31:24];
+    // end
     always @(*) begin
-        hit_merged_wdata[ 7: 0] = i_req_mask[0] ? i_req_wdata[ 7: 0] : hit_word[ 7: 0];
-        hit_merged_wdata[15: 8] = i_req_mask[1] ? i_req_wdata[15: 8] : hit_word[15: 8];
-        hit_merged_wdata[23:16] = i_req_mask[2] ? i_req_wdata[23:16] : hit_word[23:16];
-        hit_merged_wdata[31:24] = i_req_mask[3] ? i_req_wdata[31:24] : hit_word[31:24];
+
+         hit_merged_wdata =   (i_req_mask == 4'b0001) ? {{24{i_req_wdata[7]}},i_req_wdata[7:0]} :                   // Applicable for sb
+                        (i_req_mask == 4'b0010) ? {{16{i_req_wdata[15]}},i_req_wdata[15:8],hit_word[7:0]} :             // Applicable for sb
+                        (i_req_mask == 4'b0100) ? {{8{i_req_wdata[23]}},i_req_wdata[23:16],hit_word[15:0]} :            // Applicable for sb
+                        (i_req_mask == 4'b1000) ? {i_req_wdata[7:0],hit_word[23:0]} :                   // Applicable for sb
+                        (i_req_mask == 4'b0011) ? {{16{i_req_wdata[15]}},i_req_wdata[15:0]} :  // Applicable for sh - SIGN EXTENSION by default
+                        (i_req_mask == 4'b1100) ? {i_req_wdata[15:0],hit_word[15:0]} :                  // Applicable for sh
+                        (i_req_mask == 4'b1111) ? i_req_wdata :  
+                        32'bxxxx; 
     end
 
     // -------------------------------------------------------------------------
