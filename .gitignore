@@ -9,3 +9,7 @@ incremental_db/
 simulation/
 output_files/
 vsim.wlf
+__pycache__/
+wlft*
+*.mti
+*.mpf
