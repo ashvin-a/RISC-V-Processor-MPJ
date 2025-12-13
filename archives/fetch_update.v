@@ -10,6 +10,10 @@ module fetch (
     input  wire i_mispredict,                // NEW: From HCU
     input  wire [31:0] i_recovery_addr,      // NEW: Correct address to jump to
 
+    input  wire i_predict_taken,      // From BHT
+    input  wire [31:0] i_btb_target,  // From BTB
+    input  wire i_btb_valid,          // From BTB
+
     // Normal PC inputs
     output wire [31:0] o_instr_mem_rd_addr,
     output wire [31:0] o_pc_plus_4,
@@ -25,7 +29,9 @@ module fetch (
     // Logic for Next PC:
     // 1. High Priority: If mispredict, go to recovery address immediately.
     // 2. Normal: PC + 4 (Since we don't have a BTB to jump in Fetch, we fetch normally).
-    assign next_pc = (i_mispredict) ? i_recovery_addr : t_pc_plus_4;
+    assign next_pc = (i_mispredict) ? i_recovery_addr : 
+                     (i_predict_taken && i_btb_valid) ? i_btb_target : 
+                     t_pc_plus_4;
 
     assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4;
     assign o_pc_plus_4 = t_pc_plus_4;
@@ -513,6 +519,9 @@ reg [197:0]ID_EX;
 // If Predict=Taken (1) but Actual=NotTaken (0) -> We should have gone to PC+4 (of that branch)
 // If Predict=NotTaken (0) but Actual=Taken (1) -> We should have gone to Target (PC+Imm)
 wire [31:0] t_recovery_pc;
+wire [31:0] t_btb_target;
+wire t_btb_valid;
+
 assign t_recovery_pc = (ID_EX[197]) ? ID_EX[175:144] : t_pc_o_rs1_data_mux_imm_add_EX_stage_data;
 // ID_EX[197] is the propogated prediction bit
 
@@ -527,6 +536,9 @@ fetch fetch_inst(
     .i_pc_write_en(t_pc_write_en),
     .i_mispredict(t_mispredict),          // From Hazard Unit
     .i_recovery_addr(t_recovery_pc),      // Calculated recovery logic
+    .i_predict_taken(t_predict_taken),
+    .i_btb_target(t_btb_target),
+    .i_btb_valid(t_btb_valid),
     .PC(PC_current_val),
     .o_pc_plus_4(t_pc_plus_4),
     .o_instr_mem_rd_addr(o_imem_raddr),
@@ -542,6 +554,18 @@ branch_predictor bht_inst (
     .i_ex_branch_was_taken(t_alu_o_Zero_clu_Branch_and), // Actual outcome in EX
     .i_ex_is_branch_instr(ID_EX[184]),     // t_clu_branch signal in ID_EX
     .o_predict_taken(t_predict_taken)
+);
+
+branch_target_buffer btb_inst(
+    .clk(i_clk),
+    .rst(i_rst),
+    .i_fetch_pc(PC_current_val),
+    .o_target_addr(t_btb_target),
+    .o_valid(t_btb_valid),
+    .i_ex_pc(ID_EX[143:112]),
+    .i_ex_target_addr(t_pc_o_rs1_data_mux_imm_add_EX_stage_data),
+    .i_ex_is_branch(ID_EX[184]),
+    .i_ex_branch_taken(t_alu_o_Zero_clu_Branch_and)
 );
 //////////////////////////////////////////////////////////////
 //Introducing Valid signal for Invalidating instructions//////
@@ -562,7 +586,7 @@ assign reg_valid = f_valid & !IF_ID_flush;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //TODO : Enable Clear and ready
 reg [64:0]IF_ID;
-assign IF_ID_temp = {t_predict_taken, t_pc_plus_4[31:0],PC_current_val[31:0]};
+assign IF_ID_temp = {(t_predict_taken && t_btb_valid), t_pc_plus_4[31:0],PC_current_val[31:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
             IF_ID <= 65'b0;
