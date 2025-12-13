@@ -40,4 +40,30 @@ module branch_predictor (
             endcase
         end
     end
+
+
+    task dump_bht;
+    integer k;
+    reg [1:0] state;
+    begin
+        $display("\n--- BRANCH HISTORY TABLE DUMP ---");
+        $display("Index | State | Meaning");
+        $display("---------------------------");
+        for (k = 0; k < 64; k = k + 1) begin
+            state = bht[k];
+            // Only print entries that have changed from the default (01) to reduce clutter
+            if (state !== 2'b01) begin
+                case (state)
+                    2'b00: $display("  %2d  |  00   | Strong Not Taken", k);
+                    2'b01: $display("  %2d  |  01   | Weak Not Taken", k);
+                    2'b10: $display("  %2d  |  10   | Weak Taken", k);
+                    2'b11: $display("  %2d  |  11   | Strong Taken", k);
+                endcase
+            end
+        end
+        $display("---------------------------\n");
+    end
+    endtask
+
+
 endmodule
