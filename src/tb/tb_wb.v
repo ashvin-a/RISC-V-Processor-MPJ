@@ -103,21 +103,12 @@ module hart_tb ();
         .o_retire_next_pc   (next_pc)
     );
 
+    integer dmem_traffic;
     integer cycles, run;
     integer num_instructions;
 
-    integer total_branches;
-    integer total_mispredicts;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            total_mispredicts = 0;
-        end
-        else begin
-            if (dut.hazard_control_unit_inst.o_ex_mispredict_detected) begin
-                total_mispredicts = total_mispredicts + 1;
-            end
-        end
+    initial begin
+        dmem_traffic = 0;
     end
 
     initial begin
@@ -143,7 +134,6 @@ module hart_tb ();
         cycles = 0;
         run = 1;
         num_instructions = 0;
-        total_branches = 0;
         while (run) begin
             @(posedge clk);
             cycles = cycles + 1;
@@ -152,10 +142,6 @@ module hart_tb ();
                 num_instructions = num_instructions + 1;
 
                 // Base information for all instructions.
-                if (inst[6:0] == 7'b1100011 || inst[6:0] == 7'b1101111 || inst[6:0] == 7'b1100111)
-                begin
-                    total_branches = total_branches + 1;
-                end
                 if (inst[3:0] == 4'b0111 || inst[6:0] == 7'b111_0011 || inst[6:0] == 7'b110_1111)
                     $write("[%08h] %08h r[--]=-------- r[--]=--------", pc, inst);
                 else if (inst[6:0] == 7'b001_0011 || inst[6:0] == 7'b000_0011 ||
@@ -164,6 +150,10 @@ module hart_tb ();
                 else
                     $write("[%08h] %08h r[%d]=%08h r[%d]=%08h", pc, inst, rs1_raddr, rs1_rdata, rs2_raddr, rs2_rdata);
 
+                // Calculating memory traffic
+                if (dmem_wdata)begin
+                    dmem_traffic = dmem_traffic + 1;
+                end
                 // Only display write information for instructions that write.
                 if (rd_waddr != 5'd0)
                     $write(" w[%d]=%08h", rd_waddr, rd_wdata);
@@ -198,7 +188,7 @@ module hart_tb ();
                     run = 0;
             end
 
-            if (cycles > 40000) begin
+            if (cycles > 400000) begin
                 $display("Program did not halt after 40000 cycles, aborting.");
                 run = 0;
             end
@@ -206,11 +196,10 @@ module hart_tb ();
 
         $display("Program halted after %d cycles.", cycles);
         $display("Total instructions retired: %d", num_instructions);
-        $display("BLAAHAHAHAHAH : %d", total_branches);
-        if (total_branches > 0) begin
-            $display("Branch Prediction Stuffs:");
-            $display("Accuracy : %d", 100*(total_branches - total_mispredicts)/total_branches);
-	    end
+        $display("---------Memory Traffic Analysis----------");
+        $display("Data Memory Writes: %d", dmem_traffic);
+        $display("------------------------------------------");
+
         if (num_instructions == 0)
             $display("CPI: invalid (no instructions retired)");
         else

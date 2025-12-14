@@ -2,7 +2,7 @@
 A project that was done as part of ECE 552
 
 # Current Architecture
-![MPJ-Mark-2](https://github.com/ashvin-a/Single-Cycle-Processor-RISC-V/blob/main/project_files/image.png)
+![MPJ-Mark-2](https://github.com/ashvin-a/Single-Cycle-Processor-RISC-V/blob/main/docs/project_files/phase6.svg)
 # Guys Please Read this to know how to use Git!!! 🛐
 I'll just go through the basic idea on what Git does so that you'll get a grasp on 
 what it does and how to use it.
