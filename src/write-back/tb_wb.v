@@ -111,21 +111,6 @@ module hart_tb ();
         dmem_traffic = 0;
     end
 
-
-    integer total_branches;
-    integer total_mispredicts;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            total_mispredicts = 0;
-        end
-        else begin
-            if (dut.hazard_control_unit_inst.o_ex_mispredict_detected) begin
-                total_mispredicts = total_mispredicts + 1;
-            end
-        end
-    end
-
     initial begin
         clk = 1;
         rst = 0;
@@ -149,7 +134,6 @@ module hart_tb ();
         cycles = 0;
         run = 1;
         num_instructions = 0;
-        total_branches = 0;
         while (run) begin
             @(posedge clk);
             cycles = cycles + 1;
@@ -158,10 +142,6 @@ module hart_tb ();
                 num_instructions = num_instructions + 1;
 
                 // Base information for all instructions.
-                if (inst[6:0] == 7'b1100011 || inst[6:0] == 7'b1101111 || inst[6:0] == 7'b1100111)
-                begin
-                    total_branches = total_branches + 1;
-                end
                 if (inst[3:0] == 4'b0111 || inst[6:0] == 7'b111_0011 || inst[6:0] == 7'b110_1111)
                     $write("[%08h] %08h r[--]=-------- r[--]=--------", pc, inst);
                 else if (inst[6:0] == 7'b001_0011 || inst[6:0] == 7'b000_0011 ||
@@ -220,11 +200,6 @@ module hart_tb ();
         $display("Data Memory Writes: %d", dmem_traffic);
         $display("------------------------------------------");
 
-        $display("BLAAHAHAHAHAH : %d", total_branches);
-        if (total_branches > 0) begin
-            $display("Branch Prediction Stuffs:");
-            $display("Accuracy : %d", 100*(total_branches - total_mispredicts)/total_branches);
-	    end
         if (num_instructions == 0)
             $display("CPI: invalid (no instructions retired)");
         else

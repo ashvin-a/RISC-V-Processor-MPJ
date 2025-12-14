@@ -40,11 +40,15 @@ module hazard_control_unit(
     input wire i_hcu_IF_ID_MemWrite  ,                       // available in hart as t_dmem_wen
     input wire [6:0] i_hcu_IF_ID_opcode,                           // available in hart as t_i_imem_to_rf_instr[6:0]
     input wire i_hcu_branch_predictor,
+    input wire i_ex_prediction_bit,    // The prediction bit carried down from Fetch->ID->EX
+    input wire i_ex_actual_outcome,    // The result of the AND gate in EX (1=Taken, 0=Not)
+    input wire i_ex_is_branch,         // Is the instruction in EX actually a branch opcode?
     output wire o_hcu_IF_ID_flush,
     output wire o_hcu_ID_EX_flush,
     output wire o_hcu_PCWriteEn,
     output wire o_hcu_IF_ID_write_en,
-    output wire o_hcu_retire_valid
+    output wire o_hcu_retire_valid,
+    output wire o_ex_mispredict_detected // Tell Fetch to load the correct address
 );
 
 wire      control_hazard;
@@ -58,12 +62,17 @@ wire [4:0]t_hcu_IF_ID_rs2;
 assign control_hazard = i_hcu_branch_predictor;
 
 wire   load_use_hazard;
+wire misprediction;
+// If it is a branch, and (Prediction != Outcome), we have a problem.
+assign misprediction = (i_ex_is_branch) && (i_ex_prediction_bit != i_ex_actual_outcome);
 assign load_use_hazard = ((i_hcu_ID_EX_MemRead == 1) && ((i_hcu_ID_EX_rd == t_hcu_IF_ID_rs1) || (i_hcu_ID_EX_rd == t_hcu_IF_ID_rs2)) && (i_hcu_ID_EX_rd != 5'b0)) ? 1'b1 : 1'b0;
 assign o_hcu_retire_valid = ~load_use_hazard;
-assign o_hcu_IF_ID_flush    =      control_hazard;
+// assign o_hcu_IF_ID_flush    =      control_hazard;
+assign o_hcu_IF_ID_flush    =      misprediction || control_hazard;
 assign o_hcu_PCWriteEn      =      ~load_use_hazard;
 assign o_hcu_IF_ID_write_en =      ~load_use_hazard;       // will I get garbage values in the stall cycle as only IF_ID is disabled
-assign o_hcu_ID_EX_flush    =      load_use_hazard || control_hazard;
+assign o_hcu_ID_EX_flush    =      load_use_hazard || misprediction;
+assign o_ex_mispredict_detected = misprediction;
 
 assign t_hcu_IF_ID_rs1 = ((i_hcu_IF_ID_opcode == 7'b0110111)||(i_hcu_IF_ID_opcode == 7'b0010111)||(i_hcu_IF_ID_opcode == 7'b1101111)) ? 5'b00000 : i_hcu_IF_ID_rs1;
 assign t_hcu_IF_ID_rs2 = ((i_hcu_IF_ID_opcode == 7'b0110011)||(i_hcu_IF_ID_opcode == 7'b0100011)||(i_hcu_IF_ID_opcode == 7'b1100011)) ?  i_hcu_IF_ID_rs2 : 5'b00000; //
