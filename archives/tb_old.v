@@ -87,32 +87,9 @@ module hart_tb ();
         if (dmem_wen & dmem_mask[3])
             dmem[dmem_addr + 3] <= dmem_wdata[31:24];
     end
-    
-    wire [6:0] ex_opcode = dut.ID_EX_FWD_ADDR_PIPE[16:10]; 
-    wire is_cond_branch_in_ex = (ex_opcode == 7'b1100011);
 
     integer cycles, run;
     integer num_instructions;
-
-    integer total_branches;
-    integer total_mispredicts;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            total_mispredicts = 0;
-            // total_branches = 0;
-        end
-        else begin
-            if (is_cond_branch_in_ex)
-                begin
-                    // total_branches = total_branches + 1;
-                    if (dut.hazard_control_unit_inst.o_ex_mispredict_detected) begin
-                        total_mispredicts = total_mispredicts + 1;  
-                end
-            end
-        end
-    end
-
     initial begin
         clk = 1;
         rst = 0;
@@ -134,7 +111,6 @@ module hart_tb ();
         cycles = 0;
         run = 1;
         num_instructions = 0;
-        total_branches = 0;
         while (run) begin
             @(posedge clk);
             cycles = cycles + 1;
@@ -143,10 +119,6 @@ module hart_tb ();
                 num_instructions = num_instructions + 1;
 
                 // Base information for all instructions.
-                if (inst[6:0] == 7'b1100011)
-                begin
-                    total_branches = total_branches + 1;
-                end
                 if (inst[3:0] == 4'b0111 || inst[6:0] == 7'b111_0011 || inst[6:0] == 7'b110_1111)
                     $write("[%08h] %08h r[xx]=xxxxxxxx r[xx]=xxxxxxxx", pc, inst);
                 else if (inst[6:0] == 7'b001_0011 || inst[6:0] == 7'b000_0011 ||
@@ -172,7 +144,7 @@ module hart_tb ();
                     run = 0;
             end
 
-            if (cycles > 400000) begin
+            if (cycles > 40000) begin
                 $display("Program did not halt after 10000 cycles, aborting.");
                 run = 0;
             end
@@ -180,17 +152,6 @@ module hart_tb ();
 
         $display("Program halted after %d cycles.", cycles);
         $display("Total instructions retired: %d", num_instructions);
-        $display("Total branch instructions : %d", total_branches);
-        if (total_branches > 0) begin
-            $display("-------------Branch Prediction Stuffs-------------");
-            $display("Total branch instructions : %d", total_branches);
-            $display("Mispredictions : %d", total_mispredicts);
-            $display("Accuracy : %d", 100*(total_branches - total_mispredicts)/total_branches);
-            #10; // Wait a tiny bit for things to settle
-    
-            // Call the task using the hierarchical path to the instance
-            dut.bht_inst.dump_bht();
-	    end
         if (num_instructions == 0)
             $display("CPI: invalid (no instructions retired)");
         else
