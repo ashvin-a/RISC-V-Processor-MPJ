@@ -103,8 +103,14 @@ module hart_tb ();
         .o_retire_next_pc   (next_pc)
     );
 
+    integer dmem_traffic;
     integer cycles, run;
     integer num_instructions;
+
+    initial begin
+        dmem_traffic = 0;
+    end
+
     initial begin
         clk = 1;
         rst = 0;
@@ -144,6 +150,10 @@ module hart_tb ();
                 else
                     $write("[%08h] %08h r[%d]=%08h r[%d]=%08h", pc, inst, rs1_raddr, rs1_rdata, rs2_raddr, rs2_rdata);
 
+                // Calculating memory traffic
+                if (dmem_wdata)begin
+                    dmem_traffic = dmem_traffic + 1;
+                end
                 // Only display write information for instructions that write.
                 if (rd_waddr != 5'd0)
                     $write(" w[%d]=%08h", rd_waddr, rd_wdata);
@@ -178,7 +188,7 @@ module hart_tb ();
                     run = 0;
             end
 
-            if (cycles > 40000) begin
+            if (cycles > 400000) begin
                 $display("Program did not halt after 40000 cycles, aborting.");
                 run = 0;
             end
@@ -186,6 +196,10 @@ module hart_tb ();
 
         $display("Program halted after %d cycles.", cycles);
         $display("Total instructions retired: %d", num_instructions);
+        $display("---------Memory Traffic Analysis----------");
+        $display("Data Memory Writes: %d", dmem_traffic);
+        $display("------------------------------------------");
+
         if (num_instructions == 0)
             $display("CPI: invalid (no instructions retired)");
         else
