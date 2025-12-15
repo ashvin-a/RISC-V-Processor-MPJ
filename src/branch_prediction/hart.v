@@ -1,33 +1,24 @@
-`timescale 1ns/1ps
+// MODIFIED AANEE
 /////////////////////////// FETCH MODULE ///////////////////////////
 module fetch (
     input  wire clk,
     input  wire rst,
-    input  wire i_clu_halt,
+    input  wire i_clu_halt,                         // When high the program has completed excecution and the PC stops updating
+    input  wire i_mispredict,            // NEW ANDed SIGNAL from MEM Stage of the pipeline
     input  wire i_pc_write_en,
-    
-    // Branch correction signals
-    input  wire i_mispredict,                // NEW: From HCU
-    input  wire [31:0] i_recovery_addr,      // NEW: Correct address to jump to
-
-    // Normal PC inputs
-    output wire [31:0] o_instr_mem_rd_addr,
+    input  wire [31:0] i_recovery_addr,  // Take o_rs1 for JALR instruction and PC for others
+    input  wire icache_busy,
+    input  wire dcache_busy, 
+    output wire [31:0] o_instr_mem_rd_addr,          // Read address is 32 bits and not 5 bits
     output wire [31:0] o_pc_plus_4,
-    output reg  [31:0] PC,
-    output wire [31:0] o_next_pc    
+    output reg  [31:0] PC,                           // Program Counter register
+    output wire [31:0] o_next_pc                       //Added for Hazard Control Unit
 );
-
-    wire [31:0] next_pc;
-    wire [31:0] t_pc_plus_4;
-    
+    wire [31:0]next_pc;
+    wire [31:0]t_pc_plus_4;
     assign t_pc_plus_4 = PC + 4;
-
-    // Logic for Next PC:
-    // 1. High Priority: If mispredict, go to recovery address immediately.
-    // 2. Normal: PC + 4 (Since we don't have a BTB to jump in Fetch, we fetch normally).
-    assign next_pc = (i_mispredict) ? i_recovery_addr : t_pc_plus_4;
-
-    assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4;
+    assign next_pc = (i_mispredict) ? i_recovery_addr :t_pc_plus_4;
+    assign o_instr_mem_rd_addr = (i_pc_write_en) ? PC : PC - 4 ;
     assign o_pc_plus_4 = t_pc_plus_4;
 
     always @(posedge clk) begin
@@ -36,8 +27,12 @@ module fetch (
         end
         else begin
             if (!i_clu_halt)
-                if (i_pc_write_en)
-                PC <= next_pc;
+                if ((icache_busy | dcache_busy) && i_mispredict) //Added for only specific case of we have one of the misses and there is a junp
+                    PC <= next_pc;
+                else if (icache_busy | dcache_busy)
+                    PC <= PC;
+                else if (i_pc_write_en)
+                    PC <= next_pc;
         end
     end
     assign o_next_pc = next_pc;
@@ -63,7 +58,7 @@ module control_unit(
 
 assign o_clu_Branch =  !reg_valid ? 1'b0 : ((i_clu_inst[6:0] == 7'b110_0011)|| (i_clu_inst[6:0] == 7'b110_1111) || (i_clu_inst[6:0] == 7'b110_0111)); // Branch enabled for BRANCH , JAL and JALR instruction types
 
-assign o_clu_halt =    !reg_valid ? 1'b0 : (i_clu_inst[6:0] == 7'b111_0011); // Halt - For ebreak condition - (ecall also will trigger the same as it has the same opcode)
+assign o_clu_halt =    !reg_valid  ? 1'b0 : (i_clu_inst[6:0] == 7'b111_0011); // Halt - For ebreak condition - (ecall also will trigger the same as it has the same opcode)
 
 assign o_clu_MemRead =  !reg_valid ? 1'b0 : (i_clu_inst[6:0] == 7'b000_0011); // Load
 
@@ -309,8 +304,11 @@ module hart #(
     //
     // 32-bit read address for the instruction memory. This is expected to be
     // 4 byte aligned - that is, the two LSBs should be zero.
+    input  wire        i_imem_ready,
     output wire [31:0] o_imem_raddr,
+    output wire        o_imem_ren,
     // Instruction word fetched from memory, available on the same cycle.
+    input  wire        i_imem_valid,
     input  wire [31:0] i_imem_rdata,
     // Data memory accesses go through a separate read/write data memory (dmem)
     // that is shared between read (load) and write (stored). The port accepts
@@ -322,6 +320,7 @@ module hart #(
     // Read/write address for the data memory. This should be 32-bit aligned
     // (i.e. the two LSB should be zero). See `o_dmem_mask` for how to perform
     // half-word and byte accesses at unaligned addresses.
+    input  wire        i_dmem_ready,
     output wire [31:0] o_dmem_addr,
     // When asserted, the memory will perform a read at the aligned address
     // specified by `i_addr` and return the 32-bit word at that address
@@ -353,7 +352,7 @@ module hart #(
     // word right by 16 bits and sign/zero extend as appropriate.
     //
     // To perform a byte write at address 0x00002003, align `o_dmem_addr` to
-    // `0x00002000`, assert `o_dmem_wen`, and set the mask to 0b1000 to
+    // `0x00002003`, assert `o_dmem_wen`, and set the mask to 0b1000 to
     // indicate that only the upper byte should be written. On the next clock
     // cycle, the upper byte of `o_dmem_wdata` will be written to memory, with
     // the other three bytes of the aligned word unaffected. Remember to shift
@@ -364,8 +363,9 @@ module hart #(
     // this will immediately reflect the contents of memory at the specified
     // address, for the bytes enabled by the mask. When read enable is not
     // asserted, or for bytes not set in the mask, the value is undefined.
+    input  wire        i_dmem_valid,
     input  wire [31:0] i_dmem_rdata,
-	// The output `retire` interface is used to signal to the testbench that
+    // The output `retire` interface is used to signal to the testbench that
     // the CPU has completed and retired an instruction. A single cycle
     // implementation will assert this every cycle; however, a pipelined
     // implementation that needs to stall (due to internal hazards or waiting
@@ -411,39 +411,19 @@ module hart #(
     // writeback stage by this instruction. If rd is 5'd0, this field is
     // ignored and can be treated as a don't care.
     output wire [31:0] o_retire_rd_wdata,
+    output wire [31:0] o_retire_dmem_addr,
+    output wire [ 3:0] o_retire_dmem_mask,
+    output wire        o_retire_dmem_ren,
+    output wire        o_retire_dmem_wen,
+    output wire [31:0] o_retire_dmem_rdata,
+    output wire [31:0] o_retire_dmem_wdata,
     // The current program counter of the instruction being retired - i.e.
     // the instruction memory address that the instruction was fetched from.
     output wire [31:0] o_retire_pc,
     // the next program counter after the instruction is retired. For most
     // instructions, this is `o_retire_pc + 4`, but must be the branch or jump
     // target for *taken* branches and jumps.
-    output wire [31:0] o_retire_next_pc,
-    ////////////Added the below new signals for Project Phase 5////////////
-    // The following data memory retire interface is used to record the
-    // memory transactions completed by the instruction being retired.
-    // As such, it mirrors the transactions happening on the main data
-    // memory interface (o_dmem_* and i_dmem_*) but is delayed to match
-    // the retirement of the instruction. You can hook this up by just
-    // registering the main dmem interface signals into the writeback
-    // stage of your pipeline.
-    // All these fields are don't-care for instructions that do not
-    // access data memory (o_retire_dmem_ren and o_retire_dmem_wen
-    // not asserted).
-    // NOTE: This interface is new for phase 5 in order to account for
-    // the delay between data memory accesses and instruction retire.
-    //
-    // The 32-bit data memory address accessed by the instruction.
-    output wire [31:0] o_retire_dmem_addr,
-    // The byte masked used for the data memory access.
-    output wire [ 3:0] o_retire_dmem_mask,
-    // Asserted if the instruction performed a read (load) from data memory.
-    output wire        o_retire_dmem_ren,
-    // Asserted if the instruction performed a write (store) to data memory.
-    output wire        o_retire_dmem_wen,
-    // The 32-bit data read from memory by a load instruction.
-    output wire [31:0] o_retire_dmem_rdata,
-    // The 32-bit data written to memory by a store instruction.
-    output wire [31:0] o_retire_dmem_wdata
+    output wire [31:0] o_retire_next_pc
 
 `ifdef RISCV_FORMAL
     ,`RVFI_OUTPUTS,
@@ -478,6 +458,7 @@ wire t_dmem_ren;
 wire [2:0]t_clu_ld_st_type_sel;
 wire [31:0] t_immediate_out_data;
 wire t_pc_write_en;
+wire t_hcu_pc_write_en;
 wire [4:0] t_i_rd_waddr;
 wire t_i_rd_wen;
 wire [31:0] t_pc_o_rs1_data_mux_imm_add_data; // New wire added for the imm and PC added value which is passed through EX/MEM Pipieline register
@@ -502,13 +483,26 @@ wire [31:0] fwd_muxout_Bdata;
 wire [31:0] t_o_next_pc; //Added for o_nextpc
 wire t_id_ex_alu_o_Zero_clu_Branch_and;
 wire IF_ID_write_en;
+wire o_hcu_IF_ID_write_en;
+wire ID_EX_write_en;
+wire EX_MEM_write_en;
+wire MEM_WB_write_en;
 wire IF_ID_flush;
-wire [63:0]IF_ID_temp;
+// wire [63:0] IF_ID_temp;
+wire [31:0] i_ireq_addr;
+wire [31:0] i_ireq_addr_PC;
+wire [31:0] o_ires_rdata;
+wire [31:0] o_dres_rdata;
+wire [31:0] i_dreq_addr;
+wire dcache_busy;
+wire icache_busy;
+reg f_valid;
+wire reg_valid;
+wire [64:0]IF_ID_temp;
 wire t_predict_taken;      // Output from BHT
 wire t_mispredict;         // Output from HCU
 wire [197:0]ID_EX_temp;
-reg [197:0]ID_EX;
-
+reg [197:0]ID_EX; 
 // Logic to calculate Recovery Address in EX stage
 // If Predict=Taken (1) but Actual=NotTaken (0) -> We should have gone to PC+4 (of that branch)
 // If Predict=NotTaken (0) but Actual=Taken (1) -> We should have gone to Target (PC+Imm)
@@ -524,15 +518,16 @@ fetch fetch_inst(
     .clk(i_clk),
     .rst(i_rst),
     .i_clu_halt(t_clu_halt), // Halt is received immediately from the control unit (No flop)
+    .i_mispredict(t_mispredict),          // From Hazard Unit //  MEM_EX Reg ANDED output given to the Fetch -> Updating it the Non Flopped And Value from EX Stage
     .i_pc_write_en(t_pc_write_en),
-    .i_mispredict(t_mispredict),          // From Hazard Unit
-    .i_recovery_addr(t_recovery_pc),      // Calculated recovery logic
+    .i_recovery_addr(t_recovery_pc), //T Connected it to EX/MEM Pipeline register out of the muxed and added data
+    .icache_busy(icache_busy && f_valid),
+    .dcache_busy(dcache_busy && f_valid), 
     .PC(PC_current_val),
     .o_pc_plus_4(t_pc_plus_4),
-    .o_instr_mem_rd_addr(o_imem_raddr),
+    .o_instr_mem_rd_addr(i_ireq_addr),
     .o_next_pc(t_o_next_pc)
 );
-
 
 branch_predictor bht_inst (
     .clk(i_clk),
@@ -543,11 +538,17 @@ branch_predictor bht_inst (
     .i_ex_is_branch_instr(ID_EX[184]),     // t_clu_branch signal in ID_EX
     .o_predict_taken(t_predict_taken)
 );
+assign i_ireq_addr_PC = PC_current_val;
+
+assign t_pc_write_en   = (t_hcu_pc_write_en);   // PC stall when D cache or I cache is busy
+assign IF_ID_write_en  = (o_hcu_IF_ID_write_en && ~dcache_busy && ~icache_busy);              // IF stall when I cache is busy
+assign ID_EX_write_en  = ~dcache_busy;
+assign EX_MEM_write_en = ~dcache_busy;
+assign MEM_WB_write_en = ~dcache_busy;
+
 //////////////////////////////////////////////////////////////
 //Introducing Valid signal for Invalidating instructions//////
 //////////////////////////////////////////////////////////////
-reg f_valid;
-wire reg_valid;
 always @ (posedge i_clk) begin
     if (i_rst)
         f_valid <= 1'b0;
@@ -557,7 +558,9 @@ end
 assign reg_valid = f_valid & !IF_ID_flush;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////*IF_ID Pipeline Register Implementation*/////////////////////////////////////////////////////////////////////
-/////////////////////////////////////{t_predict_taken, t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
+/////////////////////////////////////{t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
+/////////////////////////////////    {IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
+///NEWW/////////////////////////////////////{t_predict_taken, t_pc_plus_4[31:0], PC_current_val[31:0]}///////////////////////////////////////////////////////
 /////////////////////////////////    {IF_ID[64]      ,  IF_ID[63:32],      IF_ID[31:0]         }//////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //TODO : Enable Clear and ready
@@ -566,7 +569,7 @@ assign IF_ID_temp = {t_predict_taken, t_pc_plus_4[31:0],PC_current_val[31:0]};
 always @ (posedge i_clk) begin
     if (i_rst)
             IF_ID <= 65'b0;
-    else if (IF_ID_flush)
+    else if (IF_ID_flush  && !dcache_busy)
             IF_ID <= 65'b0;
     else if (IF_ID_write_en)
             IF_ID <= IF_ID_temp;
@@ -580,7 +583,21 @@ always @ (posedge i_clk) begin
         reg_IF_ID_flush <= IF_ID_flush;
 end
 wire [31:0] hcu_flush_mux_imem_rdata;
-assign hcu_flush_mux_imem_rdata = (reg_IF_ID_flush) ?  32'd0 : i_imem_rdata[31:0]; //Making sure we clear the instruction data going to the ID_EX Flush //TODO - GIVE HEXA of addi x0,x0,0 instead of 32'h0
+
+wire clr_IF_ID_flush;
+assign clr_IF_ID_flush = !icache_busy;
+reg flop_IF_ID_flush;
+
+always @ (posedge i_clk) begin
+    if (i_rst)
+        flop_IF_ID_flush <= 1'b0; 
+    else if (IF_ID_flush)
+        flop_IF_ID_flush <= IF_ID_flush;
+    else if (clr_IF_ID_flush)
+        flop_IF_ID_flush <= 1'b0;
+end
+
+assign hcu_flush_mux_imem_rdata = icache_busy? 32'h0 : (((reg_IF_ID_flush|flop_IF_ID_flush)  && !dcache_busy) ?  32'h0 : o_ires_rdata[31:0]); //Making sure we clear the instruction data going to the ID_EX Flush //TODO - GIVE HEXA of addi x0,x0,0 instead of 32'h0
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 wire [31:0] t_i_imem_to_rf_instr;
@@ -640,39 +657,43 @@ imm imm_decode_inst(
 /////////{ ID_EX_FWD_ADDR_PIPE[16:10]               ID_EX_FWD_ADDR_PIPE[9:5]                         ,  ID_EX_FWD_ADDR_PIPE[4:0]};///////////
 ///      { t_i_imem_to_rf_instr[6:0]/opcode[6:0]    i_rs2_addr[4:0]/t_i_imem_to_rf_instr[24:20]      ,  i_rs1_addr[4:0]/t_i_imem_to_rf_instr[19:15]}//////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+wire ID_EX_flush;
 reg [16:0]ID_EX_FWD_ADDR_PIPE;
 wire [16:0]ID_EX_fwd_addr_pipe_temp;
 assign ID_EX_fwd_addr_pipe_temp = {t_i_imem_to_rf_instr[6:0],t_i_imem_to_rf_instr[24:20],t_i_imem_to_rf_instr[19:15]};//Instruction from IMEM is directly connected to next pipeline
 always @ (posedge i_clk) begin
     if (i_rst)
             ID_EX_FWD_ADDR_PIPE <= 17'b0;
-    else begin
+    else if (ID_EX_flush && !dcache_busy)
+            ID_EX_FWD_ADDR_PIPE <= ID_EX_FWD_ADDR_PIPE;            
+    else if (ID_EX_write_en) 
             ID_EX_FWD_ADDR_PIPE <= ID_EX_fwd_addr_pipe_temp;
-    end
 end
 ///#################################################################################################################################################################################
 ////////////////#######################################*ID_EX Pipeline Register Implementation*#######################################//////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 20 bit Wire to group all the Control Signal together for pipelining///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//{ID_EX[197]         ,ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
-//{predictor_bit         ,  t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
+//{ID_EX[196]         , ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
+//NEWW{ID_EX[197]         ,ID_EX[196]         ,  ID_EX[195], ID_EX[194],                 ID_EX[193], ID_EX[192], ID_EX[191:189],            ID_EX[188:186],                   ID_EX[185],     ID_EX[184],   ID_EX[183:182],                  ID_EX[181:180],    ID_EX[179:178],    ID_EX[177:176]||||/////////////
+//{predictor_bit,      t_clu_halt         ,  t_rd_wen,   t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen, t_dmem_ren, t_clu_ld_st_type_sel[2:0], t_sign_or_zero_ext_data_mux[2:0], t_clu_MemtoReg, t_clu_branch, t_clu_branch_instr_alu_sel[1:0], t_clu_alu_op[1:0], t_clu_ALUSrc[1:0], t_clu_lui_auipc_mux_sel[1:0]}//
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 wire [20:0] Control_input_ID_EX;
 assign Control_input_ID_EX = {t_clu_halt,t_rd_wen,t_clu_pc_o_rs1_data_mux_sel,t_dmem_wen,t_dmem_ren,t_clu_ld_st_type_sel[2:0],t_sign_or_zero_ext_data_mux[2:0],t_clu_MemtoReg,
                              t_clu_branch,t_clu_branch_instr_alu_sel[1:0],t_clu_alu_op[1:0],t_clu_ALUSrc[1:0],t_clu_lui_auipc_mux_sel[1:0]};
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////{ID_EX[197]     ,ID_EX[196:176],        ID_EX[175:144],        ID_EX[143:112],             ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
-///      {t_predict_taken,Control Signals[20:0], t_pc_plus_4,           PC_current_val,             o_rs1_rdata[31:0],  t_rs2_rdata[31:0], func7,        func3,        opcode5thbit, t_immediate_out_data,  wr_addr[4:0]}//////////////////////////
+/////////{ID_EX[196:176],        ID_EX[175:144],        ID_EX[143:112],             ID_EX[111:80],      ID_EX[79:48],      ID_EX[47:41], ID_EX[40:38], ID_EX[37],    ID_EX[36:5],           ID_EX[4:0]};///////////
+///      {Control Signals[20:0], t_pc_plus_4,           PC_current_val,             o_rs1_rdata[31:0],  t_rs2_rdata[31:0], func7,        func3,        opcode5thbit, t_immediate_out_data,  wr_addr[4:0]}//////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Declared this register above 
-wire ID_EX_flush;
+// reg [197:0]ID_EX;
+
+// wire [197:0]ID_EX_temp;
 assign ID_EX_temp = {IF_ID[64], Control_input_ID_EX[20:0],IF_ID[63:32],IF_ID[31:0],o_rs1_rdata[31:0],t_rs2_rdata[31:0],t_i_imem_to_rf_instr[31:25],t_i_imem_to_rf_instr[14:12],t_i_imem_to_rf_instr[5],t_immediate_out_data[31:0],t_i_imem_to_rf_instr[11:7]};//Instruction from IMEM is directly connected to next pipeline
 always @ (posedge i_clk) begin
     if (i_rst)
         ID_EX <= 198'b0;
-    else if (ID_EX_flush)
+    else if (ID_EX_flush && !dcache_busy)
         ID_EX <= 198'b0;
-    else
+    else if (ID_EX_write_en)
         ID_EX <= ID_EX_temp;
     end
 
@@ -734,7 +755,7 @@ assign t_dmem_mask =    ((ID_EX[191:189] == 3'b000) || (ID_EX[191:189] == 3'b011
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 9 bit Wire to group all the Control Signal together for EX_MEM pipeline/////////
 //////////{t_clu_halt, t_sign_or_zero_ext_data_mux[2:0], t_rd_wen,    t_dmem_wen,  t_dmem_ren,  t_clu_MemtoReg, t_clu_branch}///////////////////
-//////////{EX_MEM[114]        , EX_MEM[113:111],                  EX_MEM[110], EX_MEM[109], EX_MEM[108], EX_MEM[107],    EX_MEM[106]  }///////////////////
+//////////{EX_MEM[114]        , EX_MEM[113:111],         EX_MEM[110], EX_MEM[109], EX_MEM[108], EX_MEM[107],    EX_MEM[106]  }///////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////
 wire [8:0] Control_input_EX_MEM;
 assign Control_input_EX_MEM = {ID_EX[196],ID_EX[188:186],ID_EX[195],ID_EX[193],ID_EX[192],ID_EX[185],ID_EX[184]}; // Mapped to the Signals as above description
@@ -748,9 +769,9 @@ assign EX_MEM_temp = {Control_input_EX_MEM[8:0],t_pc_o_rs1_data_mux_imm_add_EX_s
 always @ (posedge i_clk) begin
     if (i_rst)
             EX_MEM <= 115'b0;
-    else begin
+    else if (EX_MEM_write_en)
             EX_MEM <= EX_MEM_temp;
-    end
+    
 end
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////AND Logic implemented in MEM Stage/////////////////////////////////////////////
@@ -759,18 +780,22 @@ assign  t_alu_o_Zero_clu_Branch_and = EX_MEM[73] & EX_MEM[106]; // AND of t_clu_
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////!!!!!!!!!!IMPORTANT!!!!!!!!!!!!!!!////////////////
-//assign t_pc_o_rs1_data_mux_imm_add_data =  EX_MEM[105:74]; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
-assign t_pc_o_rs1_data_mux_imm_add_data =  t_pc_o_rs1_data_mux_imm_add_EX_stage_data; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
+// assign t_pc_o_rs1_data_mux_imm_add_data =  EX_MEM[105:74]; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
+// assign t_recovery_pc =  EX_MEM[105:74]; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
+assign t_recovery_pc =  t_pc_o_rs1_data_mux_imm_add_EX_stage_data; // The PC + imm value executed in EX is Pipelined to MEM and is now being sent to Fetch (For Branch and Jumps)
 //// Avoiding the Flopping from ID_EX to EX_MEM before giving it to fetch
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////Muxes - Changing the assignments to receive the data from MEM_EX pipeline///////////
-assign o_dmem_wen = EX_MEM[109];
-assign o_dmem_ren = EX_MEM[108];
-assign o_dmem_addr = (EX_MEM[109] || EX_MEM[108]) ? {EX_MEM[68:39],2'b0} : EX_MEM[68:37]; //Only when w_en or ren is set we are to align the addresses
+wire i_dreq_wen;
+wire i_dreq_ren;
+assign i_dreq_wen = EX_MEM[109];
+assign i_dreq_ren = EX_MEM[108];
+assign i_dreq_addr = (EX_MEM[109] || EX_MEM[108]) ? {EX_MEM[68:39],2'b0} : EX_MEM[68:37]; //Only when w_en or ren is set we are to align the addresses
 
 assign f_rs2_rdata  = EX_MEM[36:5]; // The Pipelined o_rs2_data coming from REG for STORE instruction
 // For store instructions only 
-assign o_dmem_wdata =   (EX_MEM[72:69] == 4'b0001) ? {{24{f_rs2_rdata[7]}},f_rs2_rdata[7:0]} :                   // Applicable for sb
+wire [31:0] temp_o_dmem_wdata;
+assign temp_o_dmem_wdata =   (EX_MEM[72:69] == 4'b0001) ? {{24{f_rs2_rdata[7]}},f_rs2_rdata[7:0]} :                   // Applicable for sb
                         (EX_MEM[72:69] == 4'b0010) ? {{16{f_rs2_rdata[15]}},f_rs2_rdata[15:8],8'b0} :             // Applicable for sb
                         (EX_MEM[72:69] == 4'b0100) ? {{8{f_rs2_rdata[23]}},f_rs2_rdata[23:16],16'b0} :            // Applicable for sb
                         (EX_MEM[72:69] == 4'b1000) ? {f_rs2_rdata[7:0],24'b0} :                   // Applicable for sb
@@ -781,6 +806,7 @@ assign o_dmem_wdata =   (EX_MEM[72:69] == 4'b0001) ? {{24{f_rs2_rdata[7]}},f_rs2
 
 //MASK Implementation
 assign o_dmem_mask = EX_MEM[72:69]; // Changed it to value coming from MEM_EX Pipeline - t_dmem_mask
+reg [31:0] f_o_dmem_wdata;
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////############################################################################################################################################################////////
 ////////////#######################################*MEM_WB Pipeline Register Implementation*#######################################//////////////////////////////////////////
@@ -788,7 +814,9 @@ assign o_dmem_mask = EX_MEM[72:69]; // Changed it to value coming from MEM_EX Pi
 ///////////###{t_sign_or_zero_ext_data_mux[2:0], t_dmem_mask[3:0],  t_clu_halt         ,  o_dmem_ren,  o_dmem_wen,  o_dmem_mask[3:0], o_dmem_addr[31:0], o_dmem_wdata[31:0]}####////////////
 /////////#####{        MEM_WB[116:114]         , MEM_WB[113:110] ,  MEM_WB[109]        ,  MEM_WB[108], MEM_WB[107], MEM_WB[106:103],  MEM_WB[102:71],   MEM_WB[70:39]    }#######////////////
 wire [77:0] retire_bus;
-assign retire_bus = {EX_MEM[113:111],EX_MEM[72:69],EX_MEM[114],o_dmem_ren,o_dmem_wen,o_dmem_mask[3:0],o_dmem_addr[31:0],o_dmem_wdata[31:0]};
+assign retire_bus = {EX_MEM[113:111],EX_MEM[72:69],EX_MEM[114],i_dreq_ren,i_dreq_wen,o_dmem_mask[3:0],i_dreq_addr[31:0],f_o_dmem_wdata[31:0]};
+//assign retire_bus = {EX_MEM[113:111],EX_MEM[72:69],EX_MEM[114],i_dreq_ren,i_dreq_wen,o_dmem_mask[3:0],i_dreq_addr[31:0],f_rs2_rdata[31:0]};
+// assign retire_bus = {EX_MEM[113:111],EX_MEM[72:69],EX_MEM[114],o_dmem_ren,o_dmem_wen,o_dmem_mask[3:0],o_dmem_addr[31:0],o_dmem_wdata[31:0]};
 /////////////////////////////////////////////////////////////////////////////////////////////////
 /////Assigning a 2 bit Wire to group all the Control Signal together for MEM_WB pipeline/////////
 //////////{      t_rd_wen,         t_clu_MemtoReg  }/////////////////////////////////////////////
@@ -806,28 +834,35 @@ assign MEM_WB_temp = {retire_bus[77:0],Control_input_MEM_WB[1:0],EX_MEM[68:37],E
 always @ (posedge i_clk) begin
     if (i_rst)
             MEM_WB <= 117'b0;
-    else begin
+    else if (MEM_WB_write_en)
             MEM_WB <= MEM_WB_temp;
-    end
+    
 end
-//For Load instructions only --> Muxing shifted to the MEM_WB stage - But i_dmem_rdata is still not flopped
-assign  i_dmem_rdata_sign_or_zero_ext_mux_data  =   (MEM_WB[113:110] == 4'b0001) && (MEM_WB[116:114] == 3'b001) ?  {{24{i_dmem_rdata[7]}},i_dmem_rdata[7:0]}         :   // lb and MASK = 4'b0001
-                                                    (MEM_WB[113:110] == 4'b0001) && (MEM_WB[116:114] == 3'b000) ?  {24'b0,i_dmem_rdata[7:0]}                         :   // lbu and MASK = 4'b0001
-                                                    (MEM_WB[113:110] == 4'b0010) && (MEM_WB[116:114] == 3'b001) ?  {{16{i_dmem_rdata[15]}},i_dmem_rdata[15:8],8'b0}  :   // lb and MASK = 4'b0010 - sign ext
-                                                    (MEM_WB[113:110] == 4'b0010) && (MEM_WB[116:114] == 3'b000) ?  {16'b0,i_dmem_rdata[15:8],8'b0}                   :   // lbu and MASK = 4'b0010
-                                                    (MEM_WB[113:110] == 4'b0100) && (MEM_WB[116:114] == 3'b001) ?  {{8{i_dmem_rdata[23]}},i_dmem_rdata[23:16],16'b0} :   // lb and MASK = 4'b0100 - sign ext
-                                                    (MEM_WB[113:110] == 4'b0100) && (MEM_WB[116:114] == 3'b000) ?  {8'b0,i_dmem_rdata[23:16],16'b0}                  :   // lbu and MASK = 4'b0100
-                                                    (MEM_WB[113:110] == 4'b1000) && (MEM_WB[116:114] == 3'b001) ?  {i_dmem_rdata[31:24],24'b0}                       :   // lb and MASK = 4'b1000
-                                                    (MEM_WB[113:110] == 4'b1000) && (MEM_WB[116:114] == 3'b000) ?  {i_dmem_rdata[31:24],24'b0}                       :   // lbu and MASK = 4'b1000
-                                                    (MEM_WB[113:110] == 4'b0011) && (MEM_WB[116:114] == 3'b011) ?  {{16{i_dmem_rdata[15]}},i_dmem_rdata[15:0]}       :   // lh and MASK = 4'b0011
-                                                    (MEM_WB[113:110] == 4'b0011) && (MEM_WB[116:114] == 3'b010) ?  {16'b0,i_dmem_rdata[15:0]}                        :   // lhu and MASK = 4'b0011
-                                                    (MEM_WB[113:110] == 4'b1100) && (MEM_WB[116:114] == 3'b011) ?  {{16{i_dmem_rdata[31]}},i_dmem_rdata[31:16]}      :   // lh and MASK = 4'b1100
-                                                    (MEM_WB[113:110] == 4'b1100) && (MEM_WB[116:114] == 3'b010) ?  {16'b0,i_dmem_rdata[31:16]}                       :   // lhu and MASK = 4'b1100
-                                                    (MEM_WB[113:110] == 4'b1111) && (MEM_WB[116:114] == 3'b100) ?  i_dmem_rdata                                      :   // lw and MASK = 4'b1111
+
+reg [31:0] f_o_dres_rdata;
+// For Load instructions only --> Muxing shifted to the MEM_WB stage - But i_dmem_rdata is still not flopped
+// We are masking the data coming out from the DMEM here in the Hart and not in the cache ///////
+// NEW_TODO : But how does the MEM_WB[113:110] and MEM_WB[116:114] will stay unchanged for the required data to be masked? - Does Pipeline stall take care of it?
+// NEW_TODO : One option is to sent it to cache and store these inputs as well whenever there is a miss along with addr , data and ren and wen and use the flopped info to mask it out
+assign  i_dmem_rdata_sign_or_zero_ext_mux_data  =   (MEM_WB[113:110] == 4'b0001) && (MEM_WB[116:114] == 3'b001) ?  {{24{f_o_dres_rdata[7]}},f_o_dres_rdata[7:0]}         :   // lb and MASK = 4'b0001
+                                                    (MEM_WB[113:110] == 4'b0001) && (MEM_WB[116:114] == 3'b000) ?  {24'b0,f_o_dres_rdata[7:0]}                         :   // lbu and MASK = 4'b0001
+                                                    (MEM_WB[113:110] == 4'b0010) && (MEM_WB[116:114] == 3'b001) ?  {{16{f_o_dres_rdata[15]}},f_o_dres_rdata[15:8],8'b0}  :   // lb and MASK = 4'b0010 - sign ext
+                                                    (MEM_WB[113:110] == 4'b0010) && (MEM_WB[116:114] == 3'b000) ?  {16'b0,f_o_dres_rdata[15:8],8'b0}                   :   // lbu and MASK = 4'b0010
+                                                    (MEM_WB[113:110] == 4'b0100) && (MEM_WB[116:114] == 3'b001) ?  {{8{f_o_dres_rdata[23]}},f_o_dres_rdata[23:16],16'b0} :   // lb and MASK = 4'b0100 - sign ext
+                                                    (MEM_WB[113:110] == 4'b0100) && (MEM_WB[116:114] == 3'b000) ?  {8'b0,f_o_dres_rdata[23:16],16'b0}                  :   // lbu and MASK = 4'b0100
+                                                    (MEM_WB[113:110] == 4'b1000) && (MEM_WB[116:114] == 3'b001) ?  {f_o_dres_rdata[31:24],24'b0}                       :   // lb and MASK = 4'b1000
+                                                    (MEM_WB[113:110] == 4'b1000) && (MEM_WB[116:114] == 3'b000) ?  {f_o_dres_rdata[31:24],24'b0}                       :   // lbu and MASK = 4'b1000
+                                                    (MEM_WB[113:110] == 4'b0011) && (MEM_WB[116:114] == 3'b011) ?  {{16{f_o_dres_rdata[15]}},f_o_dres_rdata[15:0]}       :   // lh and MASK = 4'b0011
+                                                    (MEM_WB[113:110] == 4'b0011) && (MEM_WB[116:114] == 3'b010) ?  {16'b0,f_o_dres_rdata[15:0]}                        :   // lhu and MASK = 4'b0011
+                                                    (MEM_WB[113:110] == 4'b1100) && (MEM_WB[116:114] == 3'b011) ?  {{16{f_o_dres_rdata[31]}},f_o_dres_rdata[31:16]}      :   // lh and MASK = 4'b1100
+                                                    (MEM_WB[113:110] == 4'b1100) && (MEM_WB[116:114] == 3'b010) ?  {16'b0,f_o_dres_rdata[31:16]}                       :   // lhu and MASK = 4'b1100
+                                                    (MEM_WB[113:110] == 4'b1111) && (MEM_WB[116:114] == 3'b100) ?  f_o_dres_rdata                                      :   // lw and MASK = 4'b1111
                                                                                 //i_dmem_rdata ;
                                                                                 32'bx ; //Should not happen
+                                                                        
 /////////////////THIS WILL BE IN THE LAST STAGE OF THE PIPELINE///////////////////////////
-assign i_dmem_alu_muxout_data                     =    MEM_WB[37] ? i_dmem_rdata_sign_or_zero_ext_mux_data[31:0] : MEM_WB[36:5]; // The Data going to be written to the Register - Either the Alu result or Data Read from Memory in case of Load instruction
+assign i_dmem_alu_muxout_data                     =    MEM_WB[37] ? i_dmem_rdata_sign_or_zero_ext_mux_data : MEM_WB[36:5]; // The Data going to be written to the Register - Either the Alu result or Data Read from Memory in case of Load instruction
+// assign i_dmem_alu_muxout_data                     =    MEM_WB[37] ? o_dres_rdata : MEM_WB[36:5]; // The Data going to be written to the Register - Either the Alu result or Data Read from Memory in case of Load instruction
 assign t_i_rd_waddr                               =    MEM_WB[4:0]; // Pipeline Register Write Address (Source Instruction)
 assign t_i_rd_wen                                 =    MEM_WB[38]; // Pipelined Register Write Enable  (Source Control Unit)
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -888,8 +923,8 @@ hazard_control_unit hazard_control_unit_inst (
     .o_ex_mispredict_detected(t_mispredict),    // Connect to wire t_mispredict
     .o_hcu_IF_ID_flush(IF_ID_flush), 
     .o_hcu_ID_EX_flush(ID_EX_flush),
-    .o_hcu_PCWriteEn(t_pc_write_en),
-    .o_hcu_IF_ID_write_en(IF_ID_write_en),
+    .o_hcu_PCWriteEn(t_hcu_pc_write_en),
+    .o_hcu_IF_ID_write_en(o_hcu_IF_ID_write_en),
     .i_hcu_IF_ID_opcode(t_i_imem_to_rf_instr[6:0]), //Unflopped opcode from instruction - ID_EX_FWD_ADDR_PIPE[16:10]
     .o_hcu_retire_valid(o_hcu_retire_valid),
     .i_hcu_branch_predictor(t_id_ex_alu_o_Zero_clu_Branch_and) // ANDED value from MEM Stage given to HCU for Control Hazards t_alu_o_Zero_clu_Branch_and--> t_id_ex_alu_o_Zero_clu_Branch_and
@@ -908,32 +943,42 @@ end
 ////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////Valid Signal generated at  IF ID Stage and Pipelined till MEM_WB////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+//     // assign IF_ID_valid = (icache_busy | dcache_busy | IF_ID_flush)? 1'b1 : 1'b0;
+// wire IF_ID_valid;
+// assign IF_ID_valid = dcache_busy ? 1'b1 : ((IF_ID_flush | icache_busy) ? 1'b0 : 1'b1 );
+    
    reg IF_ID_valid;
     always @(posedge i_clk) begin
-        if(i_rst) begin
-            IF_ID_valid <= 1'b0; // PRESET = 1
-        end
-        else if (IF_ID_flush)
+        if(i_rst) 
+            IF_ID_valid <= 1'b0;
+        else if (flop_IF_ID_flush && icache_busy && !dcache_busy)
+            IF_ID_valid <= 1'b0;
+        else if (IF_ID_flush && !dcache_busy)
             IF_ID_valid <= 1'b0;
         else begin
             IF_ID_valid <= 1'b1;
         end
     end
+
     reg ID_EX_o_retire_valid;
     always @ (posedge i_clk) begin
         if (i_rst)
                 ID_EX_o_retire_valid <= 1'b0;
-        else if (ID_EX_flush)
+        else if ((ID_EX_flush | icache_busy) && !dcache_busy)
+        // else if (ID_EX_flush)
            ID_EX_o_retire_valid <= 1'b0;
-        else begin
+        else if (ID_EX_write_en) begin
                 ID_EX_o_retire_valid <= IF_ID_valid;
+                // ID_EX_o_retire_valid <= !IF_ID_flush;
         end
     end
     reg EX_MEM_o_retire_valid;
     always @ (posedge i_clk) begin
         if (i_rst)
                 EX_MEM_o_retire_valid <= 1'b0;
-        else begin
+        else if (EX_MEM_write_en) begin
                 EX_MEM_o_retire_valid <= ID_EX_o_retire_valid;
         end
     end
@@ -941,7 +986,10 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 MEM_WB_o_retire_valid <= 1'b0;
-        else begin
+        else if (dcache_busy) begin
+                MEM_WB_o_retire_valid <= 1'b0;
+        end
+        else if (MEM_WB_write_en) begin
                 MEM_WB_o_retire_valid <= EX_MEM_o_retire_valid;
         end
     end
@@ -952,7 +1000,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 ID_EX_o_retire_inst <= 32'b0;
-        else begin
+        else if (ID_EX_write_en) begin
                 ID_EX_o_retire_inst <= t_i_imem_to_rf_instr[31:0];
         end
     end
@@ -960,7 +1008,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 EX_MEM_o_retire_inst <= 32'b0;
-        else begin
+        else if (EX_MEM_write_en) begin
                 EX_MEM_o_retire_inst <= ID_EX_o_retire_inst;
         end
     end
@@ -968,7 +1016,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 MEM_WB_o_retire_inst <= 32'b0;
-        else begin
+        else if (MEM_WB_write_en) begin
                 MEM_WB_o_retire_inst <= EX_MEM_o_retire_inst;
         end
     end
@@ -981,7 +1029,7 @@ end
         if(i_rst) begin
             IF_ID_o_next_pc <= 32'b0;
         end
-        else begin
+        else if (IF_ID_write_en) begin
             IF_ID_o_next_pc <= t_o_next_pc;
         end
     end
@@ -989,7 +1037,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 ID_EX_o_next_pc <= 32'b0;
-        else begin
+        else  if (ID_EX_write_en) begin
                 ID_EX_o_next_pc <= IF_ID_o_next_pc;
         end
     end
@@ -1000,7 +1048,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 EX_MEM_o_retire_pc_pc4 <= 64'b0;
-        else begin
+        else  if (EX_MEM_write_en) begin
                 EX_MEM_o_retire_pc_pc4 <= {ID_EX_o_next_pc,ID_EX[143:112]}; //nextpc and PC
         end
     end
@@ -1009,7 +1057,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 MEM_WB_o_retire_pc_pc4 <= 64'b0;
-        else begin
+        else if (MEM_WB_write_en) begin
                 MEM_WB_o_retire_pc_pc4 <= EX_MEM_o_retire_pc_pc4;
         end
     end
@@ -1023,8 +1071,7 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 EX_MEM_o_retire_o_rs1_rs2_data <= 64'b0;
-        else begin
-                //EX_MEM_o_retire_o_rs1_rs2_data <= {ID_EX[111:80],ID_EX[79:48]}; // To be changed to ALU operand inouts and outputs
+        else  if (EX_MEM_write_en) begin
                 EX_MEM_o_retire_o_rs1_rs2_data <= {rs2_rdata_imm_mux_data,t_lui_auipc_mux_data}; // To be changed to ALU operand inouts and outputs
         end
     end
@@ -1033,10 +1080,97 @@ end
     always @ (posedge i_clk) begin
         if (i_rst)
                 MEM_WB_o_retire_o_rs1_rs2_data <= 64'b0;
-        else begin
+        else if (MEM_WB_write_en) begin
                 MEM_WB_o_retire_o_rs1_rs2_data <= EX_MEM_o_retire_o_rs1_rs2_data;
         end
     end
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////I-Cache Instantiaton//////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////
+    reg [31:0]d1ff_o_next_pc;
+    always @ (posedge i_clk) begin
+        if (i_rst) begin
+                d1ff_o_next_pc <= 32'b0;
+        end
+        else if (!(icache_busy | dcache_busy | !t_hcu_pc_write_en)) begin
+                d1ff_o_next_pc <= PC_current_val;
+        end
+    end
+
+cache i_cache (
+    // Global clock and reset
+    .i_clk        (i_clk),
+    .i_rst        (i_rst),
+
+    // External memory interface
+    .i_mem_ready  (i_imem_ready),
+    .o_mem_addr   (o_imem_raddr),
+    .o_mem_ren    (o_imem_ren),
+    .o_mem_wen    (),
+    .o_mem_wdata  (),
+    .i_mem_rdata  (i_imem_rdata),
+    .i_mem_valid  (i_imem_valid),
+
+    // CPU–cache interface
+    .o_busy       (icache_busy),
+    .i_req_addr   (f_valid? (d1ff_o_next_pc) : 32'h0),  //IF_ID_o_next_pc
+    .i_req_ren    (1'b1), //need to re-check
+    .i_req_wen    (1'b0),
+    .i_req_mask   (4'b1111),
+    .i_req_wdata  (32'b0),
+    .o_res_rdata  (o_ires_rdata)
+);
+/////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////D-Cache Instantiaton//////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////
+cache d_cache (
+    // Global clock and reset
+    .i_clk        (i_clk),
+    .i_rst        (i_rst),
+
+    // External memory interface
+    .i_mem_ready  (i_dmem_ready),
+    .o_mem_addr   (o_dmem_addr),
+    .o_mem_ren    (o_dmem_ren),
+    .o_mem_wen    (o_dmem_wen),
+    .o_mem_wdata  (o_dmem_wdata),
+    .i_mem_rdata  (i_dmem_rdata),
+    .i_mem_valid  (i_dmem_valid),
+
+    // CPU–cache interface
+    .o_busy       (dcache_busy),
+    .i_req_addr   (i_dreq_addr),
+    .i_req_ren    (i_dreq_ren),
+    .i_req_wen    (i_dreq_wen),
+    .i_req_mask   (o_dmem_mask),
+    .i_req_wdata  (f_rs2_rdata),
+    .o_res_rdata  (o_dres_rdata)
+);
+//////////////////////////////////////////////////////////////////////////////////////
+///////////////Flopping o_dmem_wdata - to match timing while retiering ////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+always @ (posedge i_clk) begin
+    if (i_rst) begin
+        f_o_dmem_wdata <= 32'b0;
+    end
+    else
+        f_o_dmem_wdata <= temp_o_dmem_wdata ;
+end
+
+// Flopping dcache busy to decide if to select f_o_dmem_wdata or o_dmem_wdata for retiring
+reg dcache_busy_ff1 , dcache_busy_ff2;
+always @ (posedge i_clk) begin
+    if (i_rst) begin
+        dcache_busy_ff1 <= 1'b0;
+        dcache_busy_ff2 <= 1'b0;
+    end
+    else begin
+        dcache_busy_ff1 <= dcache_busy;
+        dcache_busy_ff2 <= dcache_busy_ff1;
+    end
+end
+
 ///////////////////////////////////////////////////////////////////
 //////////////////////////RETIRE SIGNALS///////////////////////////
 ///////////////////////////////////////////////////////////////////
@@ -1063,8 +1197,20 @@ assign o_retire_dmem_ren = MEM_WB[108];
 // Asserted if the instruction performed a write (store) to data memory.
 assign o_retire_dmem_wen = MEM_WB[107];
 // The 32-bit data written to memory by a store instruction.
-assign o_retire_dmem_wdata = MEM_WB[70:39] ;
+assign o_retire_dmem_wdata = (dcache_busy_ff2) ? MEM_WB[70:39] : f_o_dmem_wdata ;
+// assign o_retire_dmem_wdata = o_dmem_wdata;
 // The 32-bit data read from memory by a load instruction.
-assign o_retire_dmem_rdata = i_dmem_rdata[31:0]; // Picking the Raw data for dmem LOAD o_retire
+// assign o_retire_dmem_rdata = i_dmem_rdata[31:0]; // Picking the Raw data for dmem LOAD o_retire
+
+
+always @ (posedge i_clk) begin
+    if (i_rst) begin
+        f_o_dres_rdata <= 32'b0;
+    end
+    else
+        f_o_dres_rdata <= o_dres_rdata ;
+end
+
+assign o_retire_dmem_rdata = f_o_dres_rdata[31:0]; // Picking the Raw data for dmem LOAD o_retire
 
 endmodule
